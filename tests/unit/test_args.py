@@ -130,20 +130,27 @@ class TestParsePikaraokeArgs:
 
 
 class TestMicPassthroughFlag:
-    """Mic passthrough is on out of the box on Windows only, and overridable both ways."""
+    """Mic passthrough is on out of the box on Windows and Linux, and overridable both ways."""
 
-    @pytest.mark.parametrize("windows", [True, False])
-    def test_default_follows_platform(self, monkeypatch, windows):
-        monkeypatch.setattr("pikaraoke.lib.args.is_windows", lambda: windows)
+    @staticmethod
+    def _on(monkeypatch, platform):
+        monkeypatch.setattr("pikaraoke.lib.args.is_windows", lambda: platform == "windows")
+        monkeypatch.setattr("pikaraoke.lib.args.is_linux", lambda: platform == "linux")
+
+    @pytest.mark.parametrize(
+        "platform, expected", [("windows", True), ("linux", True), ("macos", False)]
+    )
+    def test_default_follows_platform(self, monkeypatch, platform, expected):
+        self._on(monkeypatch, platform)
         monkeypatch.setattr("sys.argv", ["pikaraoke"])
-        assert parse_pikaraoke_args().enable_mic_passthrough is windows
+        assert parse_pikaraoke_args().enable_mic_passthrough is expected
 
-    def test_opt_out_on_windows(self, monkeypatch):
-        monkeypatch.setattr("pikaraoke.lib.args.is_windows", lambda: True)
+    def test_opt_out_on_linux(self, monkeypatch):
+        self._on(monkeypatch, "linux")
         monkeypatch.setattr("sys.argv", ["pikaraoke", "--no-enable-mic-passthrough"])
         assert parse_pikaraoke_args().enable_mic_passthrough is False
 
-    def test_opt_in_elsewhere(self, monkeypatch):
-        monkeypatch.setattr("pikaraoke.lib.args.is_windows", lambda: False)
+    def test_opt_in_on_macos(self, monkeypatch):
+        self._on(monkeypatch, "macos")
         monkeypatch.setattr("sys.argv", ["pikaraoke", "--enable-mic-passthrough"])
         assert parse_pikaraoke_args().enable_mic_passthrough is True

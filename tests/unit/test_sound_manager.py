@@ -2,9 +2,18 @@
 
 from array import array
 
+import pytest
+
 from pikaraoke.lib import sound_manager as sm
 from pikaraoke.lib.events import EventSystem
 from pikaraoke.lib.preference_manager import PreferenceManager
+
+
+@pytest.fixture(autouse=True)
+def no_real_devices(monkeypatch):
+    """Keep start() from watching, and helpers from calling, the host's real pactl."""
+    monkeypatch.setattr(sm, "_device_fingerprint", lambda: None)
+    monkeypatch.setattr(sm, "_pactl", lambda *args: None)
 
 
 def _make_manager(tmp_path, enabled):
@@ -227,7 +236,7 @@ def test_hotplug_rescans_and_announces_only_on_change(tmp_path, monkeypatch):
             manager._watching = False
             return (2, 1)
 
-    monkeypatch.setattr(sm, "_windows_device_counts", next_counts)
+    monkeypatch.setattr(sm, "_device_fingerprint", next_counts)
     monkeypatch.setattr(sm.time, "sleep", lambda _: None)
     rescans = []
     monkeypatch.setattr(manager, "rescan", lambda: rescans.append(1))
@@ -250,3 +259,84 @@ def test_latency_change_keeps_watching_for_hotplug(tmp_path, monkeypatch):
     manager.set_latency_ms(50)
 
     assert manager._watching is True
+
+
+_PACTL_SOURCES = """Source #60
+\tName: alsa_output.usb-Topping_DX5-00.sink.monitor
+\tDescription: Monitor of DX5 II Headphones
+\tProperties:
+\t\tdevice.bus = "usb"
+Source #62
+\tName: alsa_input.usb-Blue_Yeti-00.analog-stereo
+\tDescription: Yeti Stereo Microphone Analog Stereo
+\tProperties:
+\t\tdevice.bus = "usb"
+\t\tdevice.form_factor = "microphone"
+Source #63
+\tName: alsa_input.usb-Logitech_C920-02.analog-stereo
+\tDescription: HD Pro Webcam C920 Analog Stereo
+\tProperties:
+\t\tdevice.bus = "usb"
+\t\tdevice.form_factor = "webcam"
+Source #64
+\tName: alsa_input.pci-0000_00_1f.3.analog-stereo
+\tDescription: Built-in Audio Analog Stereo
+\tProperties:
+\t\tdevice.bus = "pci"
+Source #65
+\tName: alsa_input.usb-Blue_Yeti-00.analog-stereo.echo-cancel
+\tDescription: Yeti (echo cancelled)
+"""
+
+
+def test_pactl_sources_auto_enable_by_bus_not_name(monkeypatch):
+    """PipeWire's labels rarely say USB, so its bus and form factor decide.
+
+    Monitors and our own echo-cancel sources are not mics at all.
+    """
+    monkeypatch.setattr(sm, "_pactl", lambda *args: _PACTL_SOURCES)
+
+    sources = {s["label"]: s["autoEnable"] for s in sm._pactl_list_sources()}
+
+    assert sources == {
+        "Yeti Stereo Microphone Analog Stereo": True,
+        "HD Pro Webcam C920 Analog Stereo": False,
+        "Built-in Audio Analog Stereo": False,
+    }
+
+
+def test_pactl_source_names_ignore_our_own_sources(monkeypatch):
+    """Loading echo-cancel adds a source; that must not read as a hot-plug and loop."""
+    short = (
+        "62\talsa_input.usb-Yeti\tPipeWire\ts16le 2ch 48000Hz\tRUNNING\n"
+        "65\talsa_input.usb-Yeti.echo-cancel\tPipeWire\ts16le 2ch 48000Hz\tRUNNING\n"
+        "60\talsa_output.usb-DX5.monitor\tPipeWire\ts32le 2ch 48000Hz\tIDLE\n"
+    )
+    monkeypatch.setattr(sm, "_pactl", lambda *args: short)
+
+    assert sm._pactl_source_names() == ("alsa_input.usb-Yeti",)
+
+
+def test_pactl_volume_sets_the_loopback_not_the_system_mic(tmp_path, monkeypatch):
+    """The mic slider changes what PiKaraoke plays, not the mic level other apps record."""
+    monkeypatch.setattr(sm, "_HAS_PACTL", True)
+    sink_inputs = "Sink Input #300\n\tDriver: PipeWire\n\tOwner Module: 42\n"
+    calls = []
+
+    def fake_pactl(*args):
+        calls.append(args)
+        return {"load-module": "42\n", "list": sink_inputs}.get(args[0], "")
+
+    monkeypatch.setattr(sm, "_pactl", fake_pactl)
+    manager = _make_manager(tmp_path, enabled=True)
+    manager._device_list = [{"deviceId": "62", "label": "Yeti", "paSource": "yeti"}]
+    manager._device_index = {"62": manager._device_list[0]}
+
+    assert manager.activate("62", 1.5)
+    manager.update_volume("62", 0.5)
+
+    volume_calls = [c for c in calls if "volume" in c[0]]
+    assert volume_calls == [
+        ("set-sink-input-volume", "300", "150%"),
+        ("set-sink-input-volume", "300", "50%"),
+    ]

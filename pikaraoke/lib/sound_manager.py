@@ -4,9 +4,9 @@ Enumerates system audio input devices and manages passthrough from
 microphone inputs to speakers. Uses PulseAudio/PipeWire on Linux
 (via pactl) and sounddevice (PortAudio) on Windows/macOS.
 
-USB mics switch themselves on the first time they are seen, and on Windows
-plugging or unplugging a device is picked up while running, so a karaoke mic
-works without visiting the settings page.
+USB mics switch themselves on the first time they are seen, and plugging or
+unplugging a device is picked up while running (Windows and Linux), so a
+karaoke mic works without visiting the settings page.
 """
 
 import ctypes
@@ -71,47 +71,93 @@ _VIRTUAL_INPUT_DEVICE_NAMES = {
 }
 
 
-def _pactl_list_sources() -> list[dict]:
-    """List PulseAudio/PipeWire input sources with descriptions via a single pactl call."""
+# Mic form factors that are not for singing into; they stay off unless switched on.
+_NON_SINGING_FORM_FACTORS = {"webcam", "headset", "handset"}
+
+
+def _pactl(*args: str) -> str | None:
+    """Run pactl and return its stdout, or None on failure."""
     try:
-        result = subprocess.run(
-            ["pactl", "list", "sources"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode != 0:
-            return []
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+        result = subprocess.run(["pactl", *args], capture_output=True, text=True, timeout=5)
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        logging.warning(f"pactl {args[0]} failed: {e}")
+        return None
+    if result.returncode != 0:
+        logging.warning(f"pactl {' '.join(args)} failed: {result.stderr.strip()}")
+        return None
+    return result.stdout
+
+
+def _is_real_source(name: str) -> bool:
+    """Monitors echo the speakers and .echo-cancel sources are our own; neither is a mic."""
+    return not name.endswith((".monitor", ".echo-cancel"))
+
+
+def _pactl_list_sources() -> list[dict]:
+    """List PulseAudio/PipeWire input sources via a single pactl call.
+
+    The bus and form factor properties decide auto-enable: unlike labels
+    ("Yeti Stereo Microphone Analog Stereo"), they reliably say USB.
+    """
+    output = _pactl("list", "sources")
+    if output is None:
         return []
 
-    sources = []
-    current: dict[str, str] = {}
-    for line in result.stdout.splitlines():
+    sources: list[dict[str, str]] = []
+    for line in output.splitlines():
         stripped = line.strip()
         if stripped.startswith("Source #"):
-            if current.get("name") and ".monitor" not in current["name"]:
-                sources.append(current)
-            current = {"deviceId": stripped.split("#", 1)[1]}
-        name_match = re.match(r"Name:\s+(.+)", stripped)
-        if name_match:
-            current["name"] = name_match.group(1)
-        desc_match = re.match(r"Description:\s+(.+)", stripped)
-        if desc_match:
-            current["description"] = desc_match.group(1)
-
-    # Don't forget the last source
-    if current.get("name") and ".monitor" not in current["name"]:
-        sources.append(current)
+            sources.append({"deviceId": stripped.split("#", 1)[1]})
+            continue
+        if not sources:
+            continue
+        match = re.match(
+            r'(?:(Name|Description):\s+(.+)|(device\.bus|device\.form_factor) = "(.*)")',
+            stripped,
+        )
+        if match:
+            key = match.group(1) or match.group(3)
+            sources[-1].setdefault(key, match.group(2) or match.group(4))
 
     return [
         {
             "deviceId": s["deviceId"],
-            "label": s.get("description", s["name"]),
-            "paSource": s["name"],
+            "label": s.get("Description", s["Name"]),
+            "paSource": s["Name"],
+            "autoEnable": s.get("device.bus") == "usb"
+            and s.get("device.form_factor") not in _NON_SINGING_FORM_FACTORS,
         }
         for s in sources
+        if s.get("Name") and _is_real_source(s["Name"])
     ]
+
+
+def _pactl_source_names() -> tuple[str, ...] | None:
+    """Names of the real input sources, cheaply, for spotting hot-plug."""
+    output = _pactl("list", "short", "sources")
+    if output is None:
+        return None
+    names = (line.split("\t")[1] for line in output.splitlines() if "\t" in line)
+    return tuple(sorted(n for n in names if _is_real_source(n)))
+
+
+def _loopback_sink_input(module_id: str) -> str | None:
+    """Index of the sink input a loopback module plays through.
+
+    PipeWire creates it asynchronously, so give it a moment to appear.
+    """
+    for _ in range(10):
+        output = _pactl("list", "sink-inputs") or ""
+        current = None
+        for line in output.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("Sink Input #"):
+                current = stripped.split("#", 1)[1]
+            elif stripped == f"Owner Module: {module_id}" and current:
+                return current
+        time.sleep(0.05)
+    logging.warning(f"No sink input found for loopback module {module_id}")
+    return None
 
 
 class _ActiveMic:
@@ -124,12 +170,16 @@ class _ActiveMic:
         streams: list | None = None,
         passthrough: "_Passthrough | None" = None,
         echo_module_id: str | None = None,
+        sink_input: str | None = None,
     ) -> None:
         self.device_id = device_id
         self.loopback_module_id = loopback_module_id
         self.streams = streams or []
         self.passthrough = passthrough
         self.echo_module_id = echo_module_id
+        # The loopback's own playback stream: its volume is the mic's level in
+        # PiKaraoke alone, leaving the system mic level other apps use untouched.
+        self.sink_input = sink_input
 
 
 class _Passthrough:
@@ -371,7 +421,6 @@ class SoundManager:
             return False
 
         source_name = dev.get("paSource", dev["label"])
-        vol_percent = int(min(volume, _MAX_GAIN) * 100)
         echo_module_id = None
 
         # Optionally load echo cancellation
@@ -380,42 +429,23 @@ class SoundManager:
             if echo_module_id:
                 source_name = f"{source_name}.echo-cancel"
 
-        try:
-            result = subprocess.run(
-                [
-                    "pactl",
-                    "load-module",
-                    "module-loopback",
-                    f"source={source_name}",
-                    f"latency_msec={latency_ms}",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode != 0:
-                logging.error(f"pactl load-module failed: {result.stderr.strip()}")
-                self._unload_module(echo_module_id)
-                return False
-            module_id = result.stdout.strip()
-        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-            logging.error(f"Failed to load loopback module: {e}")
+        output = _pactl(
+            "load-module", "module-loopback", f"source={source_name}", f"latency_msec={latency_ms}"
+        )
+        if output is None:
+            logging.error(f"Failed to load loopback module for {dev['label']}")
             self._unload_module(echo_module_id)
             return False
+        module_id = output.strip()
 
-        # Set source volume
-        try:
-            subprocess.run(
-                ["pactl", "set-source-volume", source_name, f"{vol_percent}%"],
-                capture_output=True,
-                timeout=5,
-            )
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass
-
-        active = _ActiveMic(device_id=device_id, loopback_module_id=module_id)
-        active.echo_module_id = echo_module_id
+        active = _ActiveMic(
+            device_id=device_id,
+            loopback_module_id=module_id,
+            echo_module_id=echo_module_id,
+            sink_input=_loopback_sink_input(module_id),
+        )
         self._active_mics[device_id] = active
+        _set_sink_input_volume(active.sink_input, volume)
         logging.info(f"Mic activated (pactl loopback module {module_id}): {dev['label']}")
         return True
 
@@ -490,43 +520,23 @@ class SoundManager:
 
     def _load_echo_cancel_module(self, source_name: str) -> str | None:
         """Load PulseAudio module-echo-cancel for a source. Returns module ID or None."""
-        try:
-            result = subprocess.run(
-                [
-                    "pactl",
-                    "load-module",
-                    "module-echo-cancel",
-                    f"source_name={source_name}.echo-cancel",
-                    f"source_master={source_name}",
-                    "aec_method=webrtc",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode != 0:
-                logging.warning(
-                    f"Echo cancel module failed (continuing without): {result.stderr.strip()}"
-                )
-                return None
-            logging.info(f"Echo cancellation loaded for source: {source_name}")
-            return result.stdout.strip()
-        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-            logging.warning(f"Echo cancel module unavailable: {e}")
+        output = _pactl(
+            "load-module",
+            "module-echo-cancel",
+            f"source_name={source_name}.echo-cancel",
+            f"source_master={source_name}",
+            "aec_method=webrtc",
+        )
+        if output is None:
+            logging.warning("Echo cancellation unavailable; continuing without it")
             return None
+        logging.info(f"Echo cancellation loaded for source: {source_name}")
+        return output.strip()
 
     def _unload_module(self, module_id: str | None) -> None:
         """Unload a PulseAudio module by ID, if set."""
-        if not module_id:
-            return
-        try:
-            subprocess.run(
-                ["pactl", "unload-module", module_id],
-                capture_output=True,
-                timeout=5,
-            )
-        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-            logging.warning(f"Failed to unload module {module_id}: {e}")
+        if module_id:
+            _pactl("unload-module", module_id)
 
     def deactivate(self, device_id: str) -> None:
         """Stop audio passthrough for a microphone device."""
@@ -551,19 +561,7 @@ class SoundManager:
         gain = min(volume, _MAX_GAIN)
 
         if active.loopback_module_id is not None:
-            # Update volume via pactl
-            dev = self._find_device(device_id)
-            if dev:
-                source_name = dev.get("paSource", dev["label"])
-                vol_percent = int(gain * 100)
-                try:
-                    subprocess.run(
-                        ["pactl", "set-source-volume", source_name, f"{vol_percent}%"],
-                        capture_output=True,
-                        timeout=5,
-                    )
-                except (subprocess.TimeoutExpired, FileNotFoundError):
-                    pass
+            _set_sink_input_volume(active.sink_input, gain)
         elif active.passthrough is not None:
             active.passthrough.gain = gain
 
@@ -582,13 +580,13 @@ class SoundManager:
         return self.get_enriched_devices()
 
     def start(self) -> None:
-        """Enumerate devices, re-enable saved mics and, on Windows, watch for hot-plug."""
+        """Enumerate devices, re-enable saved mics and watch for hot-plug."""
         if not self.available:
             return
         self.enumerate_devices()
         self._activate_saved_mics()
 
-        if _SOUNDDEVICE_AVAILABLE and is_windows():
+        if _device_fingerprint() is not None:
             self._watching = True
             threading.Thread(target=self._watch_hotplug, daemon=True).start()
 
@@ -616,18 +614,14 @@ class SoundManager:
                     logging.info(f"Auto-activated saved mic: {label}")
 
     def _watch_hotplug(self) -> None:
-        """Rescan when Windows reports a device was added or removed.
-
-        Polls MME's device counts, which Windows keeps current without the
-        PortAudio re-init that a rescan costs.
-        """
-        last_counts = _windows_device_counts()
+        """Rescan when a device is added or removed."""
+        last = _device_fingerprint()
         while self._watching:
             time.sleep(_HOTPLUG_POLL_SECONDS)
-            counts = _windows_device_counts()
-            if counts == last_counts or not self._watching:
+            current = _device_fingerprint()
+            if current == last or current is None or not self._watching:
                 continue
-            last_counts = counts
+            last = current
             logging.info("Audio devices changed; rescanning microphones")
             self.rescan()
             self._events.emit("mic_devices_changed")
@@ -659,13 +653,14 @@ def _extract_mic_settings_state(settings: dict) -> dict:
 
 
 def _should_auto_enable(label: str) -> bool:
-    """Whether a never-seen mic should switch itself on.
+    """Whether a never-seen mic should switch itself on, judged by its name.
 
-    Karaoke and game mics present as USB audio. Built-in laptop mics and
-    webcams (USB too, but never sung into) stay off so they cannot feed back.
+    For PortAudio, which reports nothing but a name. Karaoke and game mics
+    present as USB audio; built-in laptop mics, webcams and headsets (USB
+    too, but never sung into) stay off so they cannot feed back.
     """
     lowered = label.lower()
-    return "usb" in lowered and "cam" not in lowered
+    return "usb" in lowered and not any(w in lowered for w in ("cam", "headset"))
 
 
 def _auto_enable_new_mics(devices: list[dict], settings: dict) -> bool:
@@ -676,7 +671,7 @@ def _auto_enable_new_mics(devices: list[dict], settings: dict) -> bool:
     changed = False
     for dev in devices:
         label = dev["label"]
-        if label not in settings and _should_auto_enable(label):
+        if label not in settings and dev.get("autoEnable", _should_auto_enable(label)):
             settings[label] = {"enabled": True, "volume": 1.0}
             logging.info(f"New USB mic detected, enabling: {label}")
             changed = True
@@ -703,6 +698,24 @@ def _close_streams(streams: list) -> None:
             stream.close()
         except (sd.PortAudioError, OSError) as e:
             logging.warning(f"Error closing mic stream: {e}")
+
+
+def _set_sink_input_volume(sink_input: str | None, volume: float) -> None:
+    if sink_input is not None:
+        _pactl("set-sink-input-volume", sink_input, f"{int(min(volume, _MAX_GAIN) * 100)}%")
+
+
+def _device_fingerprint() -> tuple | None:
+    """A cheap snapshot of the attached devices that changes on hot-plug.
+
+    None where hot-plug cannot be watched (macOS: only a PortAudio re-init
+    reveals new devices, and that would cut every open mic each poll).
+    """
+    if _HAS_PACTL:
+        return _pactl_source_names()
+    if _SOUNDDEVICE_AVAILABLE and is_windows():
+        return _windows_device_counts()
+    return None
 
 
 def _windows_device_counts() -> tuple[int, int] | None:

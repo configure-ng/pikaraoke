@@ -106,13 +106,13 @@ uv tool upgrade pikaraoke
 
 ## Microphones
 
-On Windows, plug in a USB microphone (such as a Rock Band / SingStar style game mic) and singers hear themselves through the PC's speakers, with no extra software. USB mics switch on automatically the first time they are detected, including ones plugged in while PiKaraoke is running. Built-in laptop and webcam mics stay off so they cannot feed back.
+On Windows and Linux, plug in a USB microphone (such as a Rock Band / SingStar style game mic) and singers hear themselves through the speakers, with no extra software. USB mics switch on automatically the first time they are detected, including ones plugged in while PiKaraoke is running. Built-in laptop mics, webcams and headsets stay off so they cannot feed back.
 
-- Adjust each mic's volume (up to 200% for quiet mics) from the audio settings icon on the home screen, or under Settings > Playback.
+- Adjust each mic's volume (up to 200% for quiet mics) from the audio settings icon on the home screen, or under Settings > Playback. On Linux this changes only what PiKaraoke plays, not the mic level other apps record.
 - Switch any mic on or off, and tune latency, under Settings > Playback. Your choices are remembered.
 - Turn the feature off entirely with `pikaraoke --no-enable-mic-passthrough`.
 
-On Linux and macOS, mic passthrough is opt-in: run `pikaraoke --enable-mic-passthrough`. Linux requires `pactl` (`sudo apt install pulseaudio-utils`).
+Linux needs `pactl`, which works with both PulseAudio and PipeWire. The installer adds it (`pulseaudio-utils` on Debian/Ubuntu/Raspberry Pi OS, `libpulse` on Arch). On macOS, mic passthrough is opt-in: run `pikaraoke --enable-mic-passthrough`.
 
 ## Docker instructions
 

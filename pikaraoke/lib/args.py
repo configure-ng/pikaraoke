@@ -4,7 +4,12 @@ import argparse
 import logging
 import os
 
-from pikaraoke.lib.get_platform import get_default_dl_dir, get_platform, is_windows
+from pikaraoke.lib.get_platform import (
+    get_default_dl_dir,
+    get_platform,
+    is_linux,
+    is_windows,
+)
 from pikaraoke.lib.preference_manager import PreferenceManager
 from pikaraoke.lib.url_prefix import normalize_url_base_path
 
@@ -377,8 +382,8 @@ def parse_pikaraoke_args() -> argparse.Namespace:
     playback.add_argument(
         "--enable-mic-passthrough",
         action=argparse.BooleanOptionalAction,
-        default=is_windows(),
-        help="Server-side microphone passthrough so singers can hear themselves through the karaoke speakers. USB mics switch on automatically when detected. (default: on for Windows, off elsewhere)",
+        default=is_windows() or is_linux(),
+        help="Server-side microphone passthrough so singers can hear themselves through the karaoke speakers. USB mics switch on automatically when detected. (default: on for Windows and Linux, off for macOS)",
         required=False,
     )
 

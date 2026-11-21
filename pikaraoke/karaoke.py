@@ -210,7 +210,7 @@ class Karaoke:
         # Set non-preference attributes (not stored in config)
         self.port = port
         self.hide_splash_screen = hide_splash_screen
-        # Launch-only gate (on by default on Windows), never persisted to config.
+        # Launch-only gate (on by default on Windows and Linux), never persisted to config.
         self.enable_mic_passthrough = enable_mic_passthrough
         self.download_path = download_path
         self.log_level = log_level
