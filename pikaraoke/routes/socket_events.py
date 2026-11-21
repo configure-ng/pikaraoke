@@ -289,10 +289,9 @@ def setup_socket_events(socketio):
 
     @host_only("mic_refresh")
     def handle_mic_refresh() -> None:
-        """Re-enumerate mic and output devices server-side and broadcast updated lists."""
+        """Rescan mic and output devices server-side and broadcast updated lists."""
         k = get_karaoke_instance()
-        enriched = k.sound_manager.refresh()
-        socketio.emit("mic_devices_state", enriched)
+        socketio.emit("mic_devices_state", k.sound_manager.rescan())
 
     @host_only("mic_update")
     def handle_mic_update(data: dict) -> None:

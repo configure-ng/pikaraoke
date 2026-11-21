@@ -1,6 +1,6 @@
 # PiKaraoke
 
-<img width="588" alt="pikaraoke-banner" src="https://raw.githubusercontent.com/vicwomg/pikaraoke/master/docs/images/banner.png" />
+<img width="588" alt="pikaraoke-banner" src="https://raw.githubusercontent.com/configure-ng/pikaraoke/master/docs/images/banner.png" />
 
 PiKaraoke is a cross-platform karaoke server that brings the professional "KTV" experience to your home. It transforms your computer or Raspberry Pi into a dedicated karaoke station with a full-screen player and an instant web interface. Guests can join by simply scanning a QR code—no app downloads required—to browse your local library, manage the queue, and access countless karaoke hits from YouTube.
 
@@ -24,6 +24,7 @@ Love PiKaraoke? This project is independently maintained and free for everyone t
 - [Quick Install](#quick-install)
 - [Manual Installation](#manual-installation-advanced-users)
 - [Usage](#usage)
+- [Microphones](#microphones)
 - [Docker](#docker-instructions)
 - [Screenshots](#screenshots)
 - [Contributing](#contributing)
@@ -43,12 +44,12 @@ For a streamlined installation that handles all dependencies (uv, ffmpeg, deno) 
 ### Linux & macOS
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/vicwomg/pikaraoke/master/build_scripts/install/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/configure-ng/pikaraoke/master/build_scripts/install/install.sh | bash
 ```
 
 ### Windows (installer)
 
-Download `PiKaraoke-<version>-setup.exe` from the [latest release](https://github.com/vicwomg/pikaraoke/releases) and run it. It adds Start Menu and desktop shortcuts.
+Download `PiKaraoke-<version>-setup.exe` from the [latest release](https://github.com/configure-ng/pikaraoke/releases) and run it. It adds Start Menu and desktop shortcuts.
 
 Windows shows a blue "Windows protected your PC" screen because the installer is unsigned. Click **More info**, then **Run anyway**.
 
@@ -57,7 +58,7 @@ To uninstall, use **Settings > Apps**.
 ### Windows (PowerShell)
 
 ```powershell
-irm https://raw.githubusercontent.com/vicwomg/pikaraoke/master/build_scripts/install/install.ps1 | iex
+irm https://raw.githubusercontent.com/configure-ng/pikaraoke/master/build_scripts/install/install.ps1 | iex
 ```
 
 To uninstall, swap `install.ps1` for `uninstall.ps1`.
@@ -103,6 +104,16 @@ To upgrade to the latest version of pikaraoke, run:
 uv tool upgrade pikaraoke
 ```
 
+## Microphones
+
+On Windows and Linux, plug in a USB microphone (such as a Rock Band / SingStar style game mic) and singers hear themselves through the speakers, with no extra software. USB mics switch on automatically the first time they are detected, including ones plugged in while PiKaraoke is running. Built-in laptop mics, webcams and headsets stay off so they cannot feed back.
+
+- Adjust each mic's volume (up to 200% for quiet mics) from the audio settings icon on the home screen, or under Settings > Playback. On Linux this changes only what PiKaraoke plays, not the mic level other apps record.
+- Switch any mic on or off, and tune latency, under Settings > Playback. Your choices are remembered.
+- Turn the feature off entirely with `pikaraoke --no-enable-mic-passthrough`.
+
+Linux needs `pactl`, which works with both PulseAudio and PipeWire. The installer adds it (`pulseaudio-utils` on Debian/Ubuntu/Raspberry Pi OS, `libpulse` on Arch). On macOS, mic passthrough is opt-in: run `pikaraoke --enable-mic-passthrough`.
+
 ## Docker instructions
 
 Run PiKaraoke in Docker using the command below. Note the requirements for port mapping, LAN IP specification, and persistent volume mounts (set to ~/.pikaraoke in the example for simplicity):
@@ -125,13 +136,13 @@ To run under a path prefix (e.g., `/karaoke`), add `--base-path /your-path` and 
 ## Screenshots
 
 <div style="display: flex; flex-wrap: wrap;">
-<img width="250" alt="pikaraoke-nowplaying" src="https://raw.githubusercontent.com/vicwomg/pikaraoke/master/docs/images/screenshot-now-playing.png">
-<img width="250" alt="pikaraoke-queue" src="https://raw.githubusercontent.com/vicwomg/pikaraoke/master/docs/images/screenshot-queue.png">
-<img width="250" alt="pikaraoke-browse" src="https://raw.githubusercontent.com/vicwomg/pikaraoke/master/docs/images/screenshot-songs-all.png">
-<img width="250" alt="pikaraoke-search" src="https://raw.githubusercontent.com/vicwomg/pikaraoke/master/docs/images/screenshot-songs-search.png">
-<img width="250" alt="pikaraoke-add-new" src="https://raw.githubusercontent.com/vicwomg/pikaraoke/master/docs/images/screenshot-add-new.png">
-<img width="250" alt="pikaraoke-play-history" src="https://raw.githubusercontent.com/vicwomg/pikaraoke/master/docs/images/screenshot-play-history.png">
-<img width="400" alt="pikaraoke-tv2" src="https://raw.githubusercontent.com/vicwomg/pikaraoke/master/docs/images/tv.png">
+<img width="250" alt="pikaraoke-nowplaying" src="https://raw.githubusercontent.com/configure-ng/pikaraoke/master/docs/images/screenshot-now-playing.png">
+<img width="250" alt="pikaraoke-queue" src="https://raw.githubusercontent.com/configure-ng/pikaraoke/master/docs/images/screenshot-queue.png">
+<img width="250" alt="pikaraoke-browse" src="https://raw.githubusercontent.com/configure-ng/pikaraoke/master/docs/images/screenshot-songs-all.png">
+<img width="250" alt="pikaraoke-search" src="https://raw.githubusercontent.com/configure-ng/pikaraoke/master/docs/images/screenshot-songs-search.png">
+<img width="250" alt="pikaraoke-add-new" src="https://raw.githubusercontent.com/configure-ng/pikaraoke/master/docs/images/screenshot-add-new.png">
+<img width="250" alt="pikaraoke-play-history" src="https://raw.githubusercontent.com/configure-ng/pikaraoke/master/docs/images/screenshot-play-history.png">
+<img width="400" alt="pikaraoke-tv2" src="https://raw.githubusercontent.com/configure-ng/pikaraoke/master/docs/images/tv.png">
 </div>
 
 ## Contributing
