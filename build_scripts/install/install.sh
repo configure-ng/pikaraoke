@@ -1,10 +1,14 @@
 #!/bin/bash
 
 # PiKaraoke One-Line Installer
-# Supports macOS (Homebrew) and Linux (apt-get)
+# Supports macOS (Homebrew) and Linux (apt-get, pacman)
 
 set -e
 set -o pipefail
+
+# This fork (native mic passthrough) is not on PyPI, so install it from GitHub.
+# A source archive rather than git+https: uv needs git for that.
+PACKAGE_SOURCE="pikaraoke @ https://github.com/configure-ng/pikaraoke/archive/refs/heads/master.zip"
 
 # Handle flags
 CONFIRM="y"
@@ -37,9 +41,14 @@ if ! command -v ffmpeg &> /dev/null; then
     fi
 fi
 
-# pactl (pulseaudio-utils) is needed for mic loopback on Linux (works with PipeWire too)
+# pactl is needed for mic loopback on Linux (works with PipeWire too). Debian
+# ships it as pulseaudio-utils, Arch as libpulse.
 if [ "$OS_TYPE" == "Linux" ] && ! command -v pactl &> /dev/null; then
-    PKGS_TO_INSTALL+=("pulseaudio-utils"); DISPLAY_PKGS+=("pulseaudio-utils")
+    if command -v pacman &> /dev/null; then
+        PKGS_TO_INSTALL+=("libpulse"); DISPLAY_PKGS+=("libpulse")
+    else
+        PKGS_TO_INSTALL+=("pulseaudio-utils"); DISPLAY_PKGS+=("pulseaudio-utils")
+    fi
 fi
 
 SKIP_UV=0
@@ -112,10 +121,22 @@ if [ "$OS_TYPE" == "Darwin" ]; then
         brew link ffmpeg-full
     fi
 
+elif [ "$OS_TYPE" == "Linux" ] && command -v pacman &> /dev/null; then
+    # Arch and derivatives (Omarchy, Manjaro, EndeavourOS): uv and deno are
+    # in the official repos, so everything comes from pacman.
+    if [ $SKIP_DENO -eq 0 ]; then PKGS_TO_INSTALL+=("deno"); fi
+    echo "Checking for missing dependencies..."
+    if [ ${#PKGS_TO_INSTALL[@]} -gt 0 ]; then
+        echo "Installing dependencies via pacman: ${PKGS_TO_INSTALL[*]}"
+        sudo pacman -S --needed --noconfirm "${PKGS_TO_INSTALL[@]}"
+    else
+        echo "All core dependencies (FFmpeg, uv, pactl) are already installed."
+    fi
+
 elif [ "$OS_TYPE" == "Linux" ]; then
-    # Linux (Assumes Debian/Ubuntu/Raspberry Pi OS)
+    # Linux (Debian/Ubuntu/Raspberry Pi OS)
     if ! command -v apt-get &> /dev/null; then
-        echo "Error: This script currently only supports Debian-based Linux distributions (using apt-get)."
+        echo "Error: This script supports Debian-based (apt-get) and Arch-based (pacman) Linux distributions."
         exit 1
     fi
 
@@ -160,21 +181,16 @@ fi
 # Install pikaraoke
 echo "Installing pikaraoke via uv..."
 
+if [ "$LOCAL" == "y" ]; then SOURCE="."; else SOURCE="$PACKAGE_SOURCE"; fi
 if uv tool list | grep -q "pikaraoke"; then
     WAS_INSTALLED=1
     echo "PiKaraoke is already installed. Upgrading..."
-    if [ "$LOCAL" == "y" ]; then
-        uv tool install --force .
-    else
-        uv tool upgrade pikaraoke
-    fi
+    # Reinstall rather than "uv tool upgrade": the archive URL never changes, so
+    # only a refetch picks up new commits, and it also replaces a PyPI install.
+    uv tool install --force --reinstall "$SOURCE"
 else
     WAS_INSTALLED=0
-    if [ "$LOCAL" == "y" ]; then
-        uv tool install .
-    else
-        uv tool install pikaraoke
-    fi
+    uv tool install "$SOURCE"
 fi
 
 # 6. Create Desktop Shortcuts
@@ -183,8 +199,10 @@ if [ $INSTALL_SHORTCUTS -eq 1 ]; then
     PIKARAOKE_BIN=$(command -v pikaraoke || echo "$HOME/.local/bin/pikaraoke")
     SHARE_DIR="$HOME/.local/share/pikaraoke"
     mkdir -p "$SHARE_DIR"
-    ICON_PATH="$SHARE_DIR/logo.icns"
-    ICON_URL="https://raw.githubusercontent.com/vicwomg/pikaraoke/refs/heads/master/pikaraoke/static/icons/logo.icns"
+    # Linux launchers render PNG; macOS app icons take .icns.
+    if [ "$OS_TYPE" == "Darwin" ]; then ICON_FILE="logo.icns"; else ICON_FILE="logo.png"; fi
+    ICON_PATH="$SHARE_DIR/$ICON_FILE"
+    ICON_URL="https://raw.githubusercontent.com/configure-ng/pikaraoke/refs/heads/master/pikaraoke/static/icons/$ICON_FILE"
     if [ ! -f "$ICON_PATH" ]; then
         curl -fsSL "$ICON_URL" -o "$ICON_PATH" || echo "Warning: Could not download icon"
     fi
@@ -228,7 +246,7 @@ EOF
             local name="$1"
             local args="$2"
             local filename="$3"
-            local target="$HOME/Desktop/$filename"
+            local target="$4/$filename"
 
             cat <<EOF > "$target"
 [Desktop Entry]
@@ -243,12 +261,17 @@ EOF
             chmod +x "$target"
         }
 
+        # The app launcher entry is what tiling desktops (e.g. Omarchy) show;
+        # there may be no Desktop folder at all.
+        APPS_DIR="$HOME/.local/share/applications"
+        mkdir -p "$APPS_DIR"
+        create_linux_desktop "PiKaraoke" "" "PiKaraoke.desktop" "$APPS_DIR"
+        create_linux_desktop "PiKaraoke (headless)" "--headless" "PiKaraoke-headless.desktop" "$APPS_DIR"
+        echo "PiKaraoke added to the application launcher."
         if [ -d "$HOME/Desktop" ]; then
-            create_linux_desktop "PiKaraoke" "" "PiKaraoke.desktop"
-            create_linux_desktop "PiKaraoke (headless)" "--headless" "PiKaraoke-headless.desktop"
+            create_linux_desktop "PiKaraoke" "" "PiKaraoke.desktop" "$HOME/Desktop"
+            create_linux_desktop "PiKaraoke (headless)" "--headless" "PiKaraoke-headless.desktop" "$HOME/Desktop"
             echo "Linux shortcuts created on Desktop."
-        else
-            echo "Warning: Desktop directory not found. Skipping shortcut creation."
         fi
     fi
 fi
