@@ -4,13 +4,16 @@ import subprocess as _stdlib_subprocess  # Before monkey patching
 
 _stdlib_subprocess_run = _stdlib_subprocess.run
 
-from gevent import monkey, spawn
+from gevent import monkey
+from gevent import signal_handler as gevent_signal_handler
+from gevent import spawn
 
 monkey.patch_all()
 
 import datetime
 import logging
 import os
+import signal
 import sys
 from pathlib import Path
 from urllib.parse import quote, urlsplit
@@ -347,8 +350,13 @@ def main() -> None:
     )
     server.start()
 
-    # Handle sigterm, apparently cherrypy won't shut down without explicit handling
-    # signal.signal(signal.SIGTERM, lambda signum, stack_frame: k.stop())
+    # A kill, or closing the terminal it runs in (as the app launcher entry
+    # does), must still reach the cleanup below: on Linux a mic loopback lives
+    # in PipeWire, not in this process, and would keep playing after it exits.
+    # Windows has neither signal, and its mic streams die with the process.
+    for shutdown_signal in ("SIGTERM", "SIGHUP"):
+        if hasattr(signal, shutdown_signal):
+            gevent_signal_handler(getattr(signal, shutdown_signal), k.stop)
 
     # force headless mode when on Android
     if (platform == "android") and not args.hide_splash_screen:
