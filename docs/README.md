@@ -1,6 +1,6 @@
 # PiKaraoke
 
-<img width="588" alt="pikaraoke-banner" src="https://raw.githubusercontent.com/vicwomg/pikaraoke/master/docs/images/banner.png" />
+<img width="588" alt="pikaraoke-banner" src="https://raw.githubusercontent.com/configure-ng/pikaraoke/master/docs/images/banner.png" />
 
 PiKaraoke is a cross-platform karaoke server that brings the professional "KTV" experience to your home. It transforms your computer or Raspberry Pi into a dedicated karaoke station with a full-screen player and an instant web interface. Guests can join by simply scanning a QR code—no app downloads required—to browse your local library, manage the queue, and access countless karaoke hits from YouTube.
 
@@ -44,12 +44,12 @@ For a streamlined installation that handles all dependencies (uv, ffmpeg, deno) 
 ### Linux & macOS
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/vicwomg/pikaraoke/master/build_scripts/install/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/configure-ng/pikaraoke/master/build_scripts/install/install.sh | bash
 ```
 
 ### Windows (installer)
 
-Download `PiKaraoke-<version>-setup.exe` from the [latest release](https://github.com/vicwomg/pikaraoke/releases) and run it. It adds Start Menu and desktop shortcuts.
+Download `PiKaraoke-<version>-setup.exe` from the [latest release](https://github.com/configure-ng/pikaraoke/releases) and run it. It adds Start Menu and desktop shortcuts.
 
 Windows shows a blue "Windows protected your PC" screen because the installer is unsigned. Click **More info**, then **Run anyway**.
 
@@ -58,7 +58,7 @@ To uninstall, use **Settings > Apps**.
 ### Windows (PowerShell)
 
 ```powershell
-irm https://raw.githubusercontent.com/vicwomg/pikaraoke/master/build_scripts/install/install.ps1 | iex
+irm https://raw.githubusercontent.com/configure-ng/pikaraoke/master/build_scripts/install/install.ps1 | iex
 ```
 
 To uninstall, swap `install.ps1` for `uninstall.ps1`.
@@ -136,13 +136,13 @@ To run under a path prefix (e.g., `/karaoke`), add `--base-path /your-path` and 
 ## Screenshots
 
 <div style="display: flex; flex-wrap: wrap;">
-<img width="250" alt="pikaraoke-nowplaying" src="https://raw.githubusercontent.com/vicwomg/pikaraoke/master/docs/images/screenshot-now-playing.png">
-<img width="250" alt="pikaraoke-queue" src="https://raw.githubusercontent.com/vicwomg/pikaraoke/master/docs/images/screenshot-queue.png">
-<img width="250" alt="pikaraoke-browse" src="https://raw.githubusercontent.com/vicwomg/pikaraoke/master/docs/images/screenshot-songs-all.png">
-<img width="250" alt="pikaraoke-search" src="https://raw.githubusercontent.com/vicwomg/pikaraoke/master/docs/images/screenshot-songs-search.png">
-<img width="250" alt="pikaraoke-add-new" src="https://raw.githubusercontent.com/vicwomg/pikaraoke/master/docs/images/screenshot-add-new.png">
-<img width="250" alt="pikaraoke-play-history" src="https://raw.githubusercontent.com/vicwomg/pikaraoke/master/docs/images/screenshot-play-history.png">
-<img width="400" alt="pikaraoke-tv2" src="https://raw.githubusercontent.com/vicwomg/pikaraoke/master/docs/images/tv.png">
+<img width="250" alt="pikaraoke-nowplaying" src="https://raw.githubusercontent.com/configure-ng/pikaraoke/master/docs/images/screenshot-now-playing.png">
+<img width="250" alt="pikaraoke-queue" src="https://raw.githubusercontent.com/configure-ng/pikaraoke/master/docs/images/screenshot-queue.png">
+<img width="250" alt="pikaraoke-browse" src="https://raw.githubusercontent.com/configure-ng/pikaraoke/master/docs/images/screenshot-songs-all.png">
+<img width="250" alt="pikaraoke-search" src="https://raw.githubusercontent.com/configure-ng/pikaraoke/master/docs/images/screenshot-songs-search.png">
+<img width="250" alt="pikaraoke-add-new" src="https://raw.githubusercontent.com/configure-ng/pikaraoke/master/docs/images/screenshot-add-new.png">
+<img width="250" alt="pikaraoke-play-history" src="https://raw.githubusercontent.com/configure-ng/pikaraoke/master/docs/images/screenshot-play-history.png">
+<img width="400" alt="pikaraoke-tv2" src="https://raw.githubusercontent.com/configure-ng/pikaraoke/master/docs/images/tv.png">
 </div>
 
 ## Contributing

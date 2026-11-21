@@ -8,6 +8,11 @@ Param(
 
 $ErrorActionPreference = "Stop"
 
+# This fork (native Windows mic passthrough) is not on PyPI, so install it from
+# GitHub. A source archive rather than git+https: uv needs git for that, and
+# most Windows machines lack it.
+$PackageSource = "pikaraoke @ https://github.com/configure-ng/pikaraoke/archive/refs/heads/master.zip"
+
 Write-Host "--- PiKaraoke Windows Installer ---" -ForegroundColor Cyan
 
 function Resolve-PikaraokeExe {
@@ -100,20 +105,15 @@ $uvPackages = uv tool list | Out-String
 
 # 6. install pikaraoke with uv
 $wasInstalled = $uvPackages -match "pikaraoke"
+$source = if ($Local) { "." } else { $PackageSource }
 if ($wasInstalled) {
+    # Reinstall rather than "uv tool upgrade": the archive URL never changes, so
+    # only a refetch picks up new commits, and it also replaces a PyPI install.
     Write-Host "Upgrading pikaraoke via uv..." -ForegroundColor Yellow
-    if ($Local) {
-        uv tool install --force .
-    } else {
-        uv tool upgrade pikaraoke
-    }
+    uv tool install --force --reinstall $source
 } else {
     Write-Host "Installing pikaraoke via uv..." -ForegroundColor Yellow
-    if ($Local) {
-        uv tool install .
-    } else {
-        uv tool install pikaraoke
-    }
+    uv tool install $source
 }
 if ($LASTEXITCODE -ne 0) { throw "Failed to install/upgrade pikaraoke via uv tool" }
 
@@ -182,6 +182,7 @@ if ($NoShortcuts) {
 Write-Host "`n--------------------------------------------------------" -ForegroundColor Green
 Write-Host "Installation complete!" -ForegroundColor Green
 Write-Host "Please restart your terminal (PowerShell) to ensure all PATH changes are loaded."
+Write-Host "USB microphones are picked up automatically: plug one in and sing."
 Write-Host "Then, simply run: `pikaraoke` or launch PiKaraoke from the desktop shortcuts."
 Write-Host "`nTIP: Put your karaoke files in: $(Join-Path $HOME 'pikaraoke-songs')" -ForegroundColor Cyan
 Write-Host "--------------------------------------------------------"

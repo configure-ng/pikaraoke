@@ -2,8 +2,8 @@
 ; Add/Remove Programs entry. Build with build_installer.ps1.
 
 #define AppName "PiKaraoke"
-#define AppPublisher "vicwomg"
-#define AppURL "https://github.com/vicwomg/pikaraoke"
+#define AppPublisher "configure-ng"
+#define AppURL "https://github.com/configure-ng/pikaraoke"
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
