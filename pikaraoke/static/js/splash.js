@@ -144,6 +144,77 @@ const fetchScore = async (playbackId) => {
   }
 };
 
+// Generated lyrics (see lyrics.py), shown when someone turns them on from a
+// phone. Fetched once per song; the mode and timing ride now_playing.
+let lyrics = null;
+let lyricsSong = null;
+let lyricsFetched = false;
+let lyricsMode = "off";
+let lyricsOffset = 0;
+// A line shows a beat before it is sung, to be read in time.
+const LYRICS_LEAD_S = 0.3;
+// In a break, the coming line shows once it is this close.
+const LYRICS_PREVIEW_S = 4;
+const LYRICS_FIELDS = { on: "text", romaji: "romaji", kana: "kana" };
+
+// The line to sing at `time` and the one after it, each "" when there is none.
+const lyricsView = (lines, time, offset, field) => {
+  let i = -1;
+  while (i + 1 < lines.length && lines[i + 1].t + offset <= time + LYRICS_LEAD_S) i += 1;
+  const text = (k) => (k >= 0 && k < lines.length ? lines[k][field] || "" : "");
+  const current = text(i);
+  if (current) return { current, next: text(i + 1) };
+  // Before the first line or in a break: only the coming line, once it is near.
+  const coming = lines[i + 1];
+  const near = coming && coming.t + offset - time <= LYRICS_PREVIEW_S;
+  return { current: "", next: near ? text(i + 1) : "" };
+};
+
+const fetchLyrics = async (song) => {
+  try {
+    const response = await fetch(PikaraokeConfig.lyricsUrl);
+    const data = response.ok ? await response.json() : null;
+    if (song === lyricsSong) lyrics = data;
+  } catch (e) {
+    console.log("Lyrics unavailable", e);
+  }
+};
+
+const updateLyrics = (np) => {
+  const state = np.now_playing_lyrics || null;
+  const song = np.now_playing_url || null;
+  if (song !== lyricsSong) {
+    lyricsSong = song;
+    lyrics = null;
+    lyricsFetched = false;
+  }
+  lyricsMode = state ? state.mode : "off";
+  lyricsOffset = state ? state.offset || 0 : 0;
+  if (song && state && state.status === "found" && !lyricsFetched) {
+    lyricsFetched = true;
+    fetchLyrics(song);
+  }
+  renderLyrics();
+};
+
+const setLineText = (selector, text) => {
+  const $line = $(selector);
+  if ($line.text() !== text) $line.text(text);
+};
+
+// Runs ten times a second, so it touches the DOM only when something changed.
+const renderLyrics = () => {
+  const field = LYRICS_FIELDS[lyricsMode];
+  const show = Boolean(field && lyrics && lyricsSong);
+  if (show) {
+    const view = lyricsView(lyrics.lines, getVideoPlayer().currentTime, lyricsOffset, field);
+    setLineText("#lyrics-current", view.current);
+    setLineText("#lyrics-next", view.next);
+  }
+  const overlay = document.getElementById("lyrics-overlay");
+  if (overlay && (overlay.style.display !== "none") !== show) $(overlay).toggle(show);
+};
+
 const endSong = async (reason = null, showScore = false) => {
   // Claim the playback up front: the score screen below can run for seconds, and
   // the server must be told which song ended, not which one is current by then.
@@ -419,6 +490,7 @@ const handleNowPlayingUpdate = (np) => {
   const video = getVideoPlayer();
 
   updateSubtitles(np.now_playing_subtitle_url, video);
+  updateLyrics(np);
 
   if (np.now_playing_url && np.now_playing_url !== currentVideoUrl) {
     currentVideoUrl = np.now_playing_url;
@@ -545,6 +617,7 @@ const setupOverlayMenus = () => {
 const setupVideoPlayer = () => {
   $('#video-container').hide();
   const video = getVideoPlayer();
+  setInterval(renderLyrics, 100);
   video.addEventListener("play", () => {
     $("#video-container").show();
     if (isMaster) {
@@ -868,6 +941,7 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     isMediaPlaying, formatTime, parsePreferenceValue,
     handleNowPlayingUpdate, endSong, flashNotification,
+    lyricsView, renderLyrics,
     applyPreferenceUpdate, applyPreferencesReset,
     applyUIScale, effectiveUIScale,
     shouldBackgroundMediaPlay, getNextBgMusicSong,
@@ -884,6 +958,8 @@ if (typeof module !== "undefined" && module.exports) {
         set currentVideoUrl(v) { currentVideoUrl = v; },
         get currentSubtitleUrl() { return currentSubtitleUrl; },
         set currentSubtitleUrl(v) { currentSubtitleUrl = v; },
+        get lyrics() { return lyrics; },
+        set lyrics(v) { lyrics = v; },
         get octopusInstance() { return octopusInstance; },
         set octopusInstance(v) { octopusInstance = v; },
         get nowPlaying() { return nowPlaying; },

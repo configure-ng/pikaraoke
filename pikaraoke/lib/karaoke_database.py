@@ -7,7 +7,7 @@ import threading
 from pikaraoke.lib.get_platform import get_data_directory
 
 # Bump when the schema changes and add a branch to _migrate().
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 
 _SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -44,6 +44,15 @@ CREATE TABLE IF NOT EXISTS songs (
     -- Storefront the suggestions came from, so a country change re-enriches
     -- only the rows matched against a different one.
     metadata_country TEXT,
+    -- Timed lyrics found online, as JSON (see lyrics.py): NULL until looked
+    -- up, so lyrics_status says whether a lookup found any.
+    lyrics TEXT,
+    -- 'found' or 'missing'; NULL until looked up.
+    lyrics_status TEXT,
+    -- Seconds the lyrics run late (+) or early (-) against this video.
+    lyrics_offset REAL DEFAULT 0,
+    -- How the TV shows them: 'off', 'on', 'romaji' or 'kana'. NULL is off.
+    lyrics_mode TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
@@ -263,6 +272,14 @@ class KaraokeDatabase:
                         "REFERENCES singers(id) ON DELETE CASCADE"
                     )
                     self._conn.execute("ALTER TABLE singers ADD COLUMN avatar_path TEXT")
+            if from_version < 4:
+                for column, coltype in (
+                    ("lyrics", "TEXT"),
+                    ("lyrics_status", "TEXT"),
+                    ("lyrics_offset", "REAL DEFAULT 0"),
+                    ("lyrics_mode", "TEXT"),
+                ):
+                    self._conn.execute(f"ALTER TABLE songs ADD COLUMN {column} {coltype}")
 
     def _table_exists(self, name: str) -> bool:
         row = self._conn.execute(
@@ -406,6 +423,55 @@ class KaraokeDatabase:
     def update_path(self, old_path: str, new_path: str) -> None:
         """Update a single song's file path (UI-triggered rename)."""
         self.update_paths([(old_path, new_path)])
+
+    def get_lyrics(self, file_path: str) -> dict | None:
+        """A song's lyrics row: lyrics (JSON text or None), status, offset, mode,
+        and the artist and title metadata enrichment found, if any.
+
+        None if the song is not in the library.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT lyrics, lyrics_status, lyrics_offset, lyrics_mode, artist, title "
+                "FROM songs "
+                "WHERE file_path = ?",
+                (file_path,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "lyrics": row[0],
+            "status": row[1],
+            "offset": row[2] or 0.0,
+            "mode": row[3] or "off",
+            "artist": row[4],
+            "title": row[5],
+        }
+
+    def set_lyrics(self, file_path: str, lyrics: str | None, offset: float = 0.0) -> None:
+        """Store a lookup's result; None records that no lyrics were found."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE songs SET lyrics = ?, lyrics_status = ?, lyrics_offset = ? "
+                "WHERE file_path = ?",
+                (lyrics, "found" if lyrics else "missing", offset, file_path),
+            )
+
+    def forget_lyrics(self, file_path: str) -> None:
+        """Clear a lookup's result, so the song is looked up again."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE songs SET lyrics = NULL, lyrics_status = NULL WHERE file_path = ?",
+                (file_path,),
+            )
+
+    def set_lyrics_display(self, file_path: str, mode: str, offset: float) -> None:
+        """Remember how this song's lyrics are shown, for the next time it plays."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE songs SET lyrics_mode = ?, lyrics_offset = ? WHERE file_path = ?",
+                (mode, offset, file_path),
+            )
 
     def set_duration(self, file_path: str, seconds: float) -> None:
         """Store a duration in whole seconds, only if the row has none yet.

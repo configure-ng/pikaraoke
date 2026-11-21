@@ -14,6 +14,7 @@ import {
   socketStub,
   startScoreCalls,
   scoreEndpoint,
+  lyricsEndpoint,
   octopusInstances,
   getVideoElement,
   getVideoFake,
@@ -735,5 +736,102 @@ describe("background media state", () => {
     state().autoplayConfirmed = false;
     state().bgPlaylist = ["a.mp3"];
     expect(getBgMusicFake().playCalls).toBe(0);
+  });
+});
+
+describe("generated lyrics", () => {
+  const LINES = [
+    { t: 10, text: "沈むように", romaji: "Shizumu you ni", kana: "しずむように" },
+    { t: 15, text: "二人だけの", romaji: "Futari dake no", kana: "ふたりだけの" },
+    { t: 20, text: "", romaji: "", kana: "" },
+    { t: 40, text: "さよなら", romaji: "Sayonara", kana: "さよなら" },
+  ];
+  const song = {
+    now_playing: "夜に駆ける",
+    now_playing_url: "/stream/PB1.m3u8",
+    playback_id: "PB1",
+    now_playing_position: 0,
+    volume: 0.85,
+  };
+  const playing = (lyricsState) => splash.handleNowPlayingUpdate({ ...song, now_playing_lyrics: lyricsState });
+  const found = (mode, offset = 0) => ({ status: "found", modes: ["off", "romaji", "kana"], mode, offset });
+  const overlay = () => document.getElementById("lyrics-overlay");
+  const shown = () => [
+    document.getElementById("lyrics-current").textContent,
+    document.getElementById("lyrics-next").textContent,
+  ];
+
+  // Module state outlives a test; a gap with nothing playing clears the last song.
+  beforeEach(() => {
+    splash.handleNowPlayingUpdate({ ...song, now_playing: null, now_playing_url: null, playback_id: null });
+  });
+
+  async function loadLyrics(mode, offset) {
+    lyricsEndpoint.result = { japanese: true, lines: LINES };
+    playing(found(mode, offset));
+    await vi.waitFor(() => expect(state().lyrics).not.toBeNull());
+  }
+
+  it("shows the line being sung and the one after it", () => {
+    expect(splash.lyricsView(LINES, 11, 0, "romaji")).toEqual({
+      current: "Shizumu you ni",
+      next: "Futari dake no",
+    });
+  });
+
+  it("brings a line up just before it is sung", () => {
+    expect(splash.lyricsView(LINES, 14.8, 0, "text").current).toBe("二人だけの");
+  });
+
+  it("previews the coming line in a break only once it is near", () => {
+    expect(splash.lyricsView(LINES, 25, 0, "kana")).toEqual({ current: "", next: "" });
+    expect(splash.lyricsView(LINES, 37, 0, "kana")).toEqual({ current: "", next: "さよなら" });
+    expect(splash.lyricsView(LINES, 7, 0, "kana")).toEqual({ current: "", next: "しずむように" });
+  });
+
+  it("shifts every line by the offset", () => {
+    expect(splash.lyricsView(LINES, 11, 2, "romaji").current).toBe("");
+    expect(splash.lyricsView(LINES, 12, 2, "romaji").current).toBe("Shizumu you ni");
+  });
+
+  it("fetches a song's lyrics once they are found, and shows them in its mode", async () => {
+    video.currentTime = 16;
+    await loadLyrics("kana", 0);
+    playing(found("kana"));
+
+    expect(lyricsEndpoint.requests).toEqual(["/api/lyrics"]);
+    expect(overlay().style.display).not.toBe("none");
+    expect(shown()).toEqual(["ふたりだけの", ""]);
+  });
+
+  it("stays hidden while the lyrics are off", async () => {
+    await loadLyrics("off", 0);
+
+    expect(overlay().style.display).toBe("none");
+  });
+
+  it("switches modes and timing without fetching again", async () => {
+    video.currentTime = 11;
+    await loadLyrics("romaji", 0);
+
+    playing(found("kana", 2));
+
+    expect(shown()).toEqual(["", "しずむように"]);
+    expect(lyricsEndpoint.requests).toHaveLength(1);
+  });
+
+  it("drops the previous song's lyrics when the song changes", async () => {
+    await loadLyrics("romaji", 0);
+
+    splash.handleNowPlayingUpdate({ ...song, now_playing_url: "/stream/PB2.m3u8", playback_id: "PB2" });
+
+    expect(state().lyrics).toBeNull();
+    expect(overlay().style.display).toBe("none");
+  });
+
+  it("asks for nothing while a lookup is still running", () => {
+    playing({ status: "searching", modes: ["off", "on"], mode: "off", offset: 0 });
+
+    expect(lyricsEndpoint.requests).toEqual([]);
   });
 });

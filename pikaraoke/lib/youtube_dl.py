@@ -265,6 +265,27 @@ def build_ytdl_download_command(
     return cmd
 
 
+def download_audio(video_url: str, dest_dir: str, timeout: float = 180) -> str | None:
+    """Download a video's smallest audio stream into dest_dir; its path, or None.
+
+    For analysis, not playback, so quality does not matter: the smallest is
+    a couple of megabytes for a whole song.
+    """
+    cmd = ytdlp_command() + ["-q", "--no-playlist", "-f", "worstaudio/worst"]
+    cmd += ["-o", os.path.join(dest_dir, "%(id)s.%(ext)s"), "--print", "after_move:filepath"]
+    cmd += _js_runtime_args() + ["--", video_url]
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        logging.warning(f"Audio download of {video_url} failed: {e}")
+        return None
+    path = result.stdout.decode("utf-8", "ignore").strip().splitlines()
+    if result.returncode != 0 or not path or not os.path.exists(path[-1]):
+        logging.warning(f"Audio download of {video_url} failed: {result.stderr.decode()[-300:]}")
+        return None
+    return path[-1]
+
+
 def get_search_results(query: str) -> list[SearchResult]:
     """Search YouTube for videos matching the query.
 

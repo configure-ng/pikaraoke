@@ -71,6 +71,50 @@
 		lastBarPosition = clamped;
 	}
 
+	var LYRICS_MODE_LABELS = {
+		// {# MSG: Lyrics mode: lyrics hidden. #}
+		off: {{ _('Off') | tojson }},
+		// {# MSG: Lyrics mode: lyrics shown as written, for a song not in Japanese. #}
+		on: {{ _('On') | tojson }},
+		// {# MSG: Lyrics mode: Japanese lyrics written in the Latin alphabet. #}
+		romaji: {{ _('Romaji') | tojson }},
+		// {# MSG: Lyrics mode: Japanese lyrics with every kanji spelled out in kana. #}
+		kana: {{ _('Kana') | tojson }}
+	};
+
+	// The lyrics control for the playing song: modes once lyrics are found,
+	// otherwise what the lookup is doing.
+	function renderLyricsControl(lyrics) {
+		$("#lyrics-control").toggle(!!lyrics && !!lyrics.status);
+		if (!lyrics || !lyrics.status) return;
+		var found = lyrics.status === "found";
+		var $modes = $("#lyrics-modes").empty().toggle(found);
+		if (found) {
+			lyrics.modes.forEach(function (mode) {
+				$("<button>")
+					.addClass("button is-small js-lyrics-mode")
+					.toggleClass("is-primary is-selected", mode === lyrics.mode)
+					.attr("data-mode", mode)
+					.text(LYRICS_MODE_LABELS[mode] || mode)
+					.appendTo($modes);
+			});
+		}
+		var $status = $("#lyrics-status").empty();
+		if (lyrics.status === "searching") {
+			// {# MSG: Shown while lyrics for the playing song are looked up online. #}
+			$status.text({{ _('Looking for lyrics...') | tojson }});
+		} else if (lyrics.status === "missing") {
+			// {# MSG: Shown when no lyrics could be found online for the playing song. #}
+			$status.text({{ _('No lyrics found for this song.') | tojson }} + " ");
+			// {# MSG: Link to look up the playing song's lyrics again. #}
+			$("<a class='js-lyrics-retry'>").text({{ _('Try again') | tojson }}).appendTo($status);
+		}
+		var showing = found && lyrics.mode !== "off";
+		$("#lyrics-timing").toggle(showing);
+		var offset = lyrics.offset || 0;
+		$("#lyrics-offset").text((offset > 0 ? "+" : "") + offset.toFixed(1) + "s");
+	}
+
 	// The focus slot is one song at one point in its life. Three states, each a
 	// test on the payload: a song playing, a song cued but not started, or nothing.
 	function handleNowPlaying(np) {
@@ -134,6 +178,7 @@
 		// stays mounted but inert (dimmed, non-interactive) so the box holds its
 		// height and does not flash as the song changes.
 		$("#focus-playing").toggle(playing || gap).toggleClass("is-inert", gap);
+		renderLyricsControl(playing ? np.now_playing_lyrics : null);
 		$("#focus-pending").toggle(manualWait);
 
 		// The ways-in: shown only on the idle screen, so a guest has somewhere to go.
@@ -281,6 +326,17 @@
 			$.post(window.pikaraokeConfig.basePath + "/api/queue/pitch?song="
 				+ encodeURIComponent(focusPendingFile) + "&semitones=" + value)
 				.done(function () { notifyKeyChanged(value); });
+		});
+
+		// The mode buttons are rebuilt on every update, so they are delegated.
+		$("#lyrics-control").on("click", ".js-lyrics-mode", function () {
+			$.post(window.pikaraokeConfig.basePath + "/api/lyrics/mode/" + $(this).data("mode"));
+		});
+		$("#lyrics-control").on("click", ".js-lyrics-retry", function () {
+			$.post(window.pikaraokeConfig.basePath + "/api/lyrics/retry");
+		});
+		$(".js-lyrics-nudge").click(function () {
+			$.post(window.pikaraokeConfig.basePath + "/api/lyrics/nudge?seconds=" + $(this).data("seconds"));
 		});
 
 		$("#pause-resume").click(function () {
@@ -550,6 +606,27 @@
 			{{ advanced_panel() }}
 		</div>
 		{% endif %}
+
+		{# Generated lyrics, for videos that show none. Everyone's to choose: it
+		   changes what the TV shows, not what plays. #}
+		<div id="lyrics-control" class="mt-3" style="display: none">
+			<div class="is-flex is-align-items-center is-justify-content-space-between is-flex-wrap-wrap">
+				<span class="icon-text has-text-weight-semibold mr-2">
+					<span class="icon"><i class="ph ph-subtitles"></i></span>
+					{# MSG: Label for the control that shows lyrics on the TV for a video without them. #}
+					<span>{% trans %}Lyrics{% endtrans %}</span>
+				</span>
+				<div id="lyrics-modes" class="buttons has-addons mb-0"></div>
+			</div>
+			<p id="lyrics-status" class="is-size-7 has-text-grey-light mt-1 mb-0"></p>
+			<div id="lyrics-timing" class="is-flex is-align-items-center mt-2" style="display: none">
+				{# MSG: Button that makes the lyrics on the TV appear sooner. #}
+				<button class="button is-small js-lyrics-nudge" data-seconds="-0.5">{% trans %}Earlier{% endtrans %}</button>
+				<span id="lyrics-offset" class="is-size-7 mx-3"></span>
+				{# MSG: Button that makes the lyrics on the TV appear later. #}
+				<button class="button is-small js-lyrics-nudge" data-seconds="0.5">{% trans %}Later{% endtrans %}</button>
+			</div>
+		</div>
 	</div>
 
 	{# Not-playing-yet state (autoplay off): Start and Skip up front, with the key

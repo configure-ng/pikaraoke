@@ -26,6 +26,7 @@
     },
     scorePhrasesUrl: "{{ url_for('splash.get_score_phrases') }}",
     scoreUrl: "{{ url_for('splash.get_score') }}",
+    lyricsUrl: "{{ url_for('lyrics.get_lyrics') }}",
   };
 </script>
 <script src="{{ url_for('static', filename='js/splash.js') }}"></script>
@@ -110,6 +111,11 @@
   <video id="video" poster="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" disableRemotePlayback playsinline webkit-playsinline style="width: 100%; height: 100%; object-fit: contain;">
     <source id="video-source" src="" />
   </video>
+  {# Generated lyrics: the line to sing and the one after, when turned on. #}
+  <div id="lyrics-overlay" style="display: none">
+    <div id="lyrics-current" class="lyrics-line"></div>
+    <div id="lyrics-next" class="lyrics-line"></div>
+  </div>
 </div>
 
 <div id="bg-video-container" class="video-container">
@@ -270,6 +276,39 @@
     background-color: var(--bulma-black);
     display: flex;
     align-items: center;
+  }
+  #lyrics-overlay {
+    position: absolute;
+    left: 50%;
+    bottom: 6vh;
+    transform: translateX(-50%);
+    width: 90vw;
+    text-align: center;
+    pointer-events: none;
+    font-family: "Hiragino Sans", "Noto Sans CJK JP", "Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif;
+  }
+  .lyrics-line {
+    display: block;
+    width: fit-content;
+    max-width: 100%;
+    margin: 0.3em auto 0;
+    padding: 0.1em 0.5em;
+    border-radius: 0.3em;
+    background: color-mix(in srgb, var(--bulma-black) 55%, transparent);
+    line-height: 1.3;
+    font-weight: 700;
+    text-shadow: 0 0 0.15em var(--bulma-black), 0 0 0.15em var(--bulma-black);
+  }
+  .lyrics-line:empty {
+    visibility: hidden;
+  }
+  #lyrics-current {
+    color: var(--bulma-white);
+    font-size: 5.5vh;
+  }
+  #lyrics-next {
+    color: color-mix(in srgb, var(--bulma-white) 65%, transparent);
+    font-size: 4vh;
   }
   #bg-video-container {
     z-index: 0;

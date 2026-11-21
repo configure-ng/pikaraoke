@@ -25,6 +25,7 @@ Love PiKaraoke? This project is independently maintained and free for everyone t
 - [Manual Installation](#manual-installation-advanced-users)
 - [Usage](#usage)
 - [Microphones](#microphones)
+- [Lyrics](#lyrics-for-videos-without-them)
 - [Docker](#docker-instructions)
 - [Screenshots](#screenshots)
 - [Contributing](#contributing)
@@ -119,6 +120,18 @@ After each song, every mic that was sung into gets a real score from 0 to 99, an
 The scoring cannot tell the melody from a harmony line that fits the music, so it rewards singing in tune rather than knowing the tune note for note. With no mic on, no score screen is shown. Turn scores off under Settings > Scoring.
 
 Linux needs `pactl`, which works with both PulseAudio and PipeWire. The installer adds it (`pulseaudio-utils` on Debian/Ubuntu/Raspberry Pi OS, `libpulse` on Arch). On macOS, mic passthrough is opt-in: run `pikaraoke --enable-mic-passthrough`.
+
+## Lyrics for videos without them
+
+Not every karaoke video shows the words. For those, PiKaraoke can put lyrics on the TV. When a song is downloaded, or first played, it looks up the song's timed lyrics on [LRCLIB](https://lrclib.net), an open lyrics database. The lyrics' timing follows the original recording, which rarely starts where a karaoke video does, so PiKaraoke also fetches the original's audio from YouTube and lines the two up by their music.
+
+Lyrics stay off until someone turns them on. While a song plays, the **Lyrics** buttons on the home page set how they show, and anyone in the room can use them. PiKaraoke remembers the choice for that song.
+
+- **Off / On** for most songs.
+- **Off / Romaji / Kana** for Japanese songs. Romaji spells the words in the Latin alphabet; kana spells every kanji out in hiragana.
+- **Earlier / Later** nudges the timing half a second at a time, if the lines run ahead of or behind the music.
+
+Japanese readings come from a dictionary and are right for most lyrics, but a poetic reading a lyricist chose on purpose can come out as the word's usual one. Songs LRCLIB does not have get no lyrics. Lyrics show a line at a time, without a word-by-word wipe.
 
 ## Docker instructions
 

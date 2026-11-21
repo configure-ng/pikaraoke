@@ -117,6 +117,7 @@ class TestChoosingTheVideos:
                 ("/stream/bg_video/<file>", "stream.stream_bg_video"),
                 ("/logo", "images.logo"),
                 ("/qrcode", "images.qrcode"),
+                ("/api/lyrics", "lyrics.get_lyrics"),
             ],
         )
 

@@ -50,6 +50,7 @@ export const socketStub = makeSocketStub();
 export const startScoreCalls = [];
 // What the stubbed score endpoint answers, and the URLs it was asked.
 export const scoreEndpoint = { result: null, requests: [] };
+export const lyricsEndpoint = { result: null, requests: [] };
 export const screensaverCalls = { start: 0, stop: 0 };
 export const octopusInstances = [];
 
@@ -113,6 +114,10 @@ const TEMPLATE = `
     <video id="video" playsinline webkit-playsinline>
       <source id="video-source" src="" />
     </video>
+    <div id="lyrics-overlay" style="display: none">
+      <div id="lyrics-current"></div>
+      <div id="lyrics-next"></div>
+    </div>
   </div>
   <div id="bg-video-container"><video id="bg-video" muted></video></div>
   <div id="now-playing" style="display: none">
@@ -173,6 +178,7 @@ beforeAll(async () => {
     },
     scorePhrasesUrl: "/api/score_phrases",
     scoreUrl: "/api/splash/score",
+    lyricsUrl: "/api/lyrics",
   };
 
   // Socket.IO: splash.js calls io({ path: ... }) at load.
@@ -235,10 +241,11 @@ beforeAll(async () => {
   window.startScore = async (staticPath, result) => {
     startScoreCalls.push([staticPath, result]);
   };
-  // fetch: only the score endpoint is fetched by splash.js itself.
+  // fetch: splash.js itself fetches only the score and the lyrics.
   window.fetch = async (url) => {
-    scoreEndpoint.requests.push(url);
-    return { ok: true, json: async () => scoreEndpoint.result };
+    const endpoint = url.startsWith("/api/lyrics") ? lyricsEndpoint : scoreEndpoint;
+    endpoint.requests.push(url);
+    return { ok: true, json: async () => endpoint.result };
   };
   window.startScreensaver = () => {
     screensaverCalls.start += 1;
@@ -375,6 +382,8 @@ beforeEach(() => {
   startScoreCalls.length = 0;
   scoreEndpoint.result = null;
   scoreEndpoint.requests = [];
+  lyricsEndpoint.result = null;
+  lyricsEndpoint.requests = [];
   screensaverCalls.start = 0;
   screensaverCalls.stop = 0;
   octopusInstances.length = 0;

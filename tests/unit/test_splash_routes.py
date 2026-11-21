@@ -107,7 +107,14 @@ class TestHidingTheUrlAndQrCode:
 
     @pytest.fixture
     def app(self):
-        return make_route_app(splash_bp, [("/logo", "images.logo"), ("/qrcode", "images.qrcode")])
+        return make_route_app(
+            splash_bp,
+            [
+                ("/logo", "images.logo"),
+                ("/qrcode", "images.qrcode"),
+                ("/api/lyrics", "lyrics.get_lyrics"),
+            ],
+        )
 
     def _hidden(self, client, css_class, **hidden):
         """Whether each element carrying `css_class` is rendered hidden."""
