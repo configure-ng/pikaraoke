@@ -35,6 +35,7 @@ from pikaraoke.lib.play_history_manager import PlayHistoryManager
 from pikaraoke.lib.playback_controller import PlaybackController
 from pikaraoke.lib.preference_manager import PreferenceManager
 from pikaraoke.lib.queue_manager import PLACEHOLDER_SINGERS, QueueManager
+from pikaraoke.lib.score_keeper import PlaybackState, ScoreKeeper
 from pikaraoke.lib.singer_manager import SingerManager, normalize_name
 from pikaraoke.lib.song_manager import SongManager
 from pikaraoke.lib.sound_manager import SoundManager
@@ -88,6 +89,7 @@ class Karaoke:
 
     # Microphone manager for server-side mic passthrough
     sound_manager: SoundManager
+    score_keeper: ScoreKeeper
 
     # Event system and preferences
     events: EventSystem
@@ -338,6 +340,21 @@ class Karaoke:
                 self.playback_controller.now_playing_filename,
                 self.playback_controller.now_playing_duration,
             ),
+        )
+
+        # Scores singing from the mics against each song (subscribes itself).
+        playback = self.playback_controller
+        self.score_keeper = ScoreKeeper(
+            events=self.events,
+            set_capture=self.sound_manager.set_capture,
+            get_playback=lambda: PlaybackState(
+                playback_id=playback.playback_id,
+                file_path=playback.now_playing_filename,
+                semitones=playback.now_playing_transpose or 0,
+                position=playback.now_playing_position,
+                is_paused=playback.is_paused,
+            ),
+            is_enabled=lambda: not self.preferences.get_or_default("disable_score"),
         )
 
         # Initialize and start download manager

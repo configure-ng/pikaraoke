@@ -48,6 +48,8 @@ export const socketStub = makeSocketStub();
 
 // Call records for the stubs the tests assert on.
 export const startScoreCalls = [];
+// What the stubbed score endpoint answers, and the URLs it was asked.
+export const scoreEndpoint = { result: null, requests: [] };
 export const screensaverCalls = { start: 0, stop: 0 };
 export const octopusInstances = [];
 
@@ -170,6 +172,7 @@ beforeAll(async () => {
       unsupportedBrowser: "Unsupported browser.",
     },
     scorePhrasesUrl: "/api/score_phrases",
+    scoreUrl: "/api/splash/score",
   };
 
   // Socket.IO: splash.js calls io({ path: ... }) at load.
@@ -229,8 +232,13 @@ beforeAll(async () => {
   };
 
   // Functions from the sibling static scripts: score.js, screensaver.js.
-  window.startScore = async (staticPath) => {
-    startScoreCalls.push(staticPath);
+  window.startScore = async (staticPath, result) => {
+    startScoreCalls.push([staticPath, result]);
+  };
+  // fetch: only the score endpoint is fetched by splash.js itself.
+  window.fetch = async (url) => {
+    scoreEndpoint.requests.push(url);
+    return { ok: true, json: async () => scoreEndpoint.result };
   };
   window.startScreensaver = () => {
     screensaverCalls.start += 1;
@@ -365,6 +373,8 @@ beforeEach(() => {
   // resume delay) now that the state says nothing may play.
   socketStub.emitted = [];
   startScoreCalls.length = 0;
+  scoreEndpoint.result = null;
+  scoreEndpoint.requests = [];
   screensaverCalls.start = 0;
   screensaverCalls.stop = 0;
   octopusInstances.length = 0;

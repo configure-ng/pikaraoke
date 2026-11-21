@@ -20,6 +20,7 @@ import threading
 import time
 from array import array
 from collections import deque
+from collections.abc import Callable
 
 from pikaraoke.lib.events import EventSystem
 from pikaraoke.lib.get_platform import is_linux, is_windows
@@ -63,6 +64,13 @@ _BLOCK_MS = 5
 _DRIFT_SLACK_BLOCKS = 4
 
 _HOTPLUG_POLL_SECONDS = 2.0
+
+# Mic audio copied out for scoring: pitch needs no higher rate than this, and
+# delivery every _CAPTURE_POLL_SECONDS keeps scoring current without busy work.
+_CAPTURE_SAMPLERATE = 16000
+_CAPTURE_POLL_SECONDS = 0.05
+# Undelivered capture chunks kept per mic before the oldest go (a few seconds).
+_CAPTURE_BACKLOG_CHUNKS = 200
 
 # Windows virtual/alias device names that duplicate real devices
 _VIRTUAL_INPUT_DEVICE_NAMES = {
@@ -171,8 +179,16 @@ class _ActiveMic:
         passthrough: "_Passthrough | None" = None,
         echo_module_id: str | None = None,
         sink_input: str | None = None,
+        label: str = "",
+        capture_source: str | None = None,
+        samplerate: int = _CAPTURE_SAMPLERATE,
     ) -> None:
         self.device_id = device_id
+        self.label = label
+        # pactl source a scoring capture records from: the echo-cancelled one
+        # when that is on, so the score hears what the speakers play.
+        self.capture_source = capture_source
+        self.samplerate = samplerate
         self.loopback_module_id = loopback_module_id
         self.streams = streams or []
         self.passthrough = passthrough
@@ -199,9 +215,15 @@ class _Passthrough:
         self._out_channels = out_channels
         self._queue: deque[bytes] = deque(maxlen=max_queued_blocks)
         self._pending = bytearray()
+        # Raw mic audio is also copied here while a song is being scored.
+        self.tap: deque[bytes] | None = None
 
     def on_input(self, indata, frames, time_info, status) -> None:
-        self._queue.append(_mix_block(bytes(indata), self.gain, self._out_channels))
+        data = bytes(indata)
+        tap = self.tap
+        if tap is not None:
+            tap.append(data)
+        self._queue.append(_mix_block(data, self.gain, self._out_channels))
 
     def on_output(self, outdata, frames, time_info, status) -> None:
         needed = len(outdata)
@@ -210,6 +232,16 @@ class _Passthrough:
         chunk = bytes(self._pending[:needed])
         del self._pending[:needed]
         outdata[:] = chunk + b"\x00" * (needed - len(chunk))
+
+
+class _Tap:
+    """A copy of one mic's audio on its way to the score keeper."""
+
+    def __init__(self, label: str, samplerate: int) -> None:
+        self.label = label
+        self.samplerate = samplerate
+        self.chunks: deque[bytes] = deque(maxlen=_CAPTURE_BACKLOG_CHUNKS)
+        self.process: subprocess.Popen | None = None
 
 
 class SoundManager:
@@ -230,6 +262,9 @@ class SoundManager:
         self._device_list: list[dict] = []
         self._device_index: dict[str, dict] = {}
         self._watching = False
+        self._capture_sink: Callable[[str, bytes, int], None] | None = None
+        self._capture_generation = 0
+        self._taps: dict[str, _Tap] = {}
 
         if enabled and not self.available:
             logging.warning(
@@ -400,12 +435,17 @@ class SoundManager:
             return True
 
         if _HAS_PACTL:
-            return self._activate_pactl(
+            activated = self._activate_pactl(
                 device_id, volume, echo_cancel=echo_cancel, latency_ms=latency_ms
             )
-        if _SOUNDDEVICE_AVAILABLE:
-            return self._activate_sounddevice(device_id, volume, latency_ms)
-        return False
+        elif _SOUNDDEVICE_AVAILABLE:
+            activated = self._activate_sounddevice(device_id, volume, latency_ms)
+        else:
+            return False
+        # A mic plugged in mid-song joins the scoring straight away.
+        if activated and self._capture_sink is not None:
+            self._tap(device_id)
+        return activated
 
     def _activate_pactl(
         self, device_id: str, volume: float, *, echo_cancel: bool, latency_ms: int
@@ -443,6 +483,8 @@ class SoundManager:
             loopback_module_id=module_id,
             echo_module_id=echo_module_id,
             sink_input=_loopback_sink_input(module_id),
+            label=dev["label"],
+            capture_source=source_name,
         )
         self._active_mics[device_id] = active
         _set_sink_input_volume(active.sink_input, volume)
@@ -511,6 +553,8 @@ class SoundManager:
             loopback_module_id=None,
             streams=streams,
             passthrough=passthrough,
+            label=self._device_index.get(device_id, {}).get("label", dev_info["name"]),
+            samplerate=samplerate,
         )
         logging.info(
             f"Mic activated ({hostapi_name}): '{dev_info['name']}' -> '{out_info['name']}' "
@@ -540,6 +584,7 @@ class SoundManager:
 
     def deactivate(self, device_id: str) -> None:
         """Stop audio passthrough for a microphone device."""
+        self._untap(device_id)
         active = self._active_mics.pop(device_id, None)
         if not active:
             return
@@ -593,7 +638,87 @@ class SoundManager:
     def stop(self) -> None:
         """Stop watching for devices and close all active mic streams."""
         self._watching = False
+        self.set_capture(None)
         self._close_all()
+
+    def set_capture(self, sink: Callable[[str, bytes, int], None] | None) -> None:
+        """Copy every active mic's audio to sink(label, int16 pcm, samplerate); None stops.
+
+        Mics that come or go while capturing (hot-plug, settings) are tapped
+        and untapped with them.
+        """
+        if not self.available:
+            return
+        if sink is None:
+            self._capture_sink = None
+            self._capture_generation += 1
+            for device_id in list(self._taps):
+                self._untap(device_id)
+            return
+        starting = self._capture_sink is None
+        self._capture_sink = sink
+        for device_id in self._active_mics:
+            if device_id not in self._taps:
+                self._tap(device_id)
+        if starting:
+            threading.Thread(
+                target=self._deliver_capture, args=(self._capture_generation,), daemon=True
+            ).start()
+
+    def _tap(self, device_id: str) -> None:
+        active = self._active_mics[device_id]
+        if active.passthrough is not None:
+            tap = _Tap(active.label, active.samplerate)
+            active.passthrough.tap = tap.chunks
+        else:
+            tap = _Tap(active.label, _CAPTURE_SAMPLERATE)
+            try:
+                tap.process = subprocess.Popen(
+                    [
+                        "parec",
+                        f"--device={active.capture_source}",
+                        "--raw",
+                        "--format=s16le",
+                        f"--rate={_CAPTURE_SAMPLERATE}",
+                        "--channels=1",
+                        "--latency-msec=50",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                )
+            except OSError as e:
+                logging.warning(f"Cannot record {active.label} for scoring: {e}")
+                return
+            threading.Thread(target=_read_capture, args=(tap,), daemon=True).start()
+        self._taps[device_id] = tap
+
+    def _untap(self, device_id: str) -> None:
+        tap = self._taps.pop(device_id, None)
+        if tap is None:
+            return
+        active = self._active_mics.get(device_id)
+        if active is not None and active.passthrough is not None:
+            active.passthrough.tap = None
+        if tap.process is not None:
+            tap.process.terminate()
+            try:
+                tap.process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                tap.process.kill()
+
+    def _deliver_capture(self, generation: int) -> None:
+        """Hand captured audio to the sink in batches, until capture stops."""
+        while self._capture_generation == generation:
+            time.sleep(_CAPTURE_POLL_SECONDS)
+            sink = self._capture_sink
+            if sink is None:
+                continue
+            for tap in list(self._taps.values()):
+                chunks = []
+                while tap.chunks:
+                    chunks.append(tap.chunks.popleft())
+                if chunks:
+                    sink(tap.label, b"".join(chunks), tap.samplerate)
 
     def _close_all(self) -> None:
         for device_id in list(self._active_mics.keys()):
@@ -698,6 +823,12 @@ def _close_streams(streams: list) -> None:
             stream.close()
         except (sd.PortAudioError, OSError) as e:
             logging.warning(f"Error closing mic stream: {e}")
+
+
+def _read_capture(tap: _Tap) -> None:
+    """Collect a parec recording until it is stopped."""
+    while chunk := tap.process.stdout.read(_CAPTURE_SAMPLERATE // 10):
+        tap.chunks.append(chunk)
 
 
 def _set_sink_input_volume(sink_input: str | None, volume: float) -> None:

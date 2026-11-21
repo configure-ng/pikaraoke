@@ -112,6 +112,12 @@ On Windows and Linux, plug in a USB microphone (such as a Rock Band / SingStar s
 - Switch any mic on or off, and tune latency, under Settings > Playback. Your choices are remembered.
 - Turn the feature off entirely with `pikaraoke --no-enable-mic-passthrough`.
 
+### Singing scores
+
+After each song, every mic that was sung into gets a real score from 0 to 99, and a duet also shows the two singers' combined score. Karaoke tracks carry no melody to compare against, so PiKaraoke listens to the song's music instead: it scores how well each note sung fits the notes the music is playing at that moment, and how much of the song was sung. Singing in tune and all the way through scores high; mumbling, singing off-key or not singing scores low. A mic left near the speakers does not score from what it overhears.
+
+The scoring cannot tell the melody from a harmony line that fits the music, so it rewards singing in tune rather than knowing the tune note for note. With no mic on, no score screen is shown. Turn scores off under Settings > Scoring.
+
 Linux needs `pactl`, which works with both PulseAudio and PipeWire. The installer adds it (`pulseaudio-utils` on Debian/Ubuntu/Raspberry Pi OS, `libpulse` on Arch). On macOS, mic passthrough is opt-in: run `pikaraoke --enable-mic-passthrough`.
 
 ## Docker instructions

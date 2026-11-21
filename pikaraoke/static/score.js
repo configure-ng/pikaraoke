@@ -12,22 +12,19 @@ function getScoreData(scoreValue) {
   }
 }
 
-function getScoreValue() {
-  const random = Math.random();
-  const bias = 2; // adjust this value to control the bias
-  const scoreValue = Math.pow(random, 1 / bias) * 99;
-  return Math.floor(scoreValue);
-}
+const formatScore = (value) => String(value).padStart(2, "0");
 
 async function showFinalScoreWithAudio(
   scoreTextElement,
   scoreValue,
   scoreReviewElement,
   scoreData,
-  applauseElement
+  applauseElement,
+  micsText
 ) {
-  scoreTextElement.text(String(scoreValue).padStart(2, "0"));
+  scoreTextElement.text(formatScore(scoreValue));
   scoreReviewElement.text(scoreData.review);
+  $("#score-mics-text").text(micsText);
   launchFireworkShow(scoreValue);
   // The song's end report waits behind this, so applause that never plays or
   // never finishes must not hold the score screen open. The clips run under 8s.
@@ -61,7 +58,9 @@ async function rotateScore(scoreTextElement, duration) {
   }
 }
 
-async function startScore(staticPath) {
+// result: the server's scores, {mics: [{name, score}], combined}. A duet shows
+// the combined score, with each mic's own beneath it.
+async function startScore(staticPath, result) {
   try {
     const r = await fetch(PikaraokeConfig.scorePhrasesUrl);
     scoreReviews = await r.json();
@@ -73,8 +72,12 @@ async function startScore(staticPath) {
   const scoreTextElement = $("#score-number-text");
   const scoreReviewElement = $("#score-review-text");
 
-  const scoreValue = getScoreValue();
+  const scoreValue = result.combined ?? result.mics[0].score;
   const scoreData = getScoreData(scoreValue);
+  const micsText =
+    result.mics.length > 1
+      ? result.mics.map((m) => `${m.name}: ${formatScore(m.score)}`).join("   \u00b7   ")
+      : "";
 
   const drums = new Audio(staticPath + "sounds/score-drums.mp3");
   // Pre-create applause audio NOW to capture the user activation window
@@ -92,8 +95,10 @@ async function startScore(staticPath) {
     scoreValue,
     scoreReviewElement,
     scoreData,
-    applause
+    applause,
+    micsText
   );
   scoreReviewElement.text("");
+  $("#score-mics-text").text("");
   scoreElement.hide();
 }
