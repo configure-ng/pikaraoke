@@ -4,7 +4,7 @@ import shutil
 import subprocess
 
 import flask_babel
-from flask import jsonify, render_template, url_for
+from flask import jsonify, render_template, request, url_for
 from flask_smorest import Blueprint
 
 from pikaraoke.karaoke import Karaoke
@@ -67,6 +67,25 @@ def _get_active_score_phrases(k: Karaoke) -> dict[str, list[str]]:
 def get_score_phrases():
     """Active score phrases as JSON — translated defaults or user-defined custom phrases."""
     return jsonify(_get_active_score_phrases(get_karaoke_instance()))
+
+
+@splash_bp.route("/api/splash/score")
+@public
+def get_score():
+    """Singing scores for the song that just ended, or null to skip the score screen."""
+    result = get_karaoke_instance().score_keeper.result(request.args.get("playback_id"))
+    if result is None:
+        return jsonify(None)
+    return jsonify(
+        {
+            "mics": [
+                # MSG: Label for one microphone's score on the score screen, e.g. "Mic 2".
+                {"name": _("Mic %(number)d", number=mic["number"]), "score": mic["score"]}
+                for mic in result["mics"]
+            ],
+            "combined": result["combined"],
+        }
+    )
 
 
 @splash_bp.route("/splash")

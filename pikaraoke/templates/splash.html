@@ -25,6 +25,7 @@
       unsupportedBrowser: {{ _('This browser is not fully supported. You may experience streaming issues. Please use Chrome/Safari/Firefox/Edge for best results.') | tojson }},
     },
     scorePhrasesUrl: "{{ url_for('splash.get_score_phrases') }}",
+    scoreUrl: "{{ url_for('splash.get_score') }}",
   };
 </script>
 <script src="{{ url_for('static', filename='js/splash.js') }}"></script>
@@ -123,6 +124,8 @@
 	<div id="score-number-text">
 	</div>
 	<div id="score-review-text">
+	</div>
+	<div id="score-mics-text">
 	</div>
 	<canvas id="fireworks"></canvas>
 </div>

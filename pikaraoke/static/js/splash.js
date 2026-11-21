@@ -130,13 +130,28 @@ const stopVideoPlayback = () => {
   hideVideo();
 }
 
+// The mics' scores for a playback, or null when there is nothing to show: no mic
+// was on, or the song could not be analysed. Either way the score screen is skipped.
+const fetchScore = async (playbackId) => {
+  if (!playbackId) return null;
+  try {
+    const url = `${PikaraokeConfig.scoreUrl}?playback_id=${encodeURIComponent(playbackId)}`;
+    const response = await fetch(url);
+    return response.ok ? await response.json() : null;
+  } catch (e) {
+    console.log("Score unavailable", e);
+    return null;
+  }
+};
+
 const endSong = async (reason = null, showScore = false) => {
   // Claim the playback up front: the score screen below can run for seconds, and
   // the server must be told which song ended, not which one is current by then.
   const endedPlaybackId = currentPlaybackId;
   currentPlaybackId = null;
   if (showScore && !PikaraokeConfig.disableScore) {
-    await startScore(withBasePath("/static/"));
+    const result = await fetchScore(endedPlaybackId);
+    if (result) await startScore(withBasePath("/static/"), result);
   }
   // A song that started during the score screen has loaded itself into the
   // player already; tearing down now would leave the screen black.

@@ -13,6 +13,7 @@ import {
   splash,
   socketStub,
   startScoreCalls,
+  scoreEndpoint,
   octopusInstances,
   getVideoElement,
   getVideoFake,
@@ -202,22 +203,36 @@ describe("endSong", () => {
     expect(socketStub.emitted.some(([e]) => e === "end_song")).toBe(false);
   });
 
-  it("shows the score screen when asked and the preference allows it", async () => {
+  it("shows the server's score for the song that ended", async () => {
+    const result = { mics: [{ name: "Mic 1", score: 82 }], combined: null };
+    scoreEndpoint.result = result;
     state().isMaster = true;
     state().currentPlaybackId = "PB1";
 
     await splash.endSong("complete", true);
-    expect(startScoreCalls).toEqual(["/static/"]);
+    expect(scoreEndpoint.requests).toEqual(["/api/splash/score?playback_id=PB1"]);
+    expect(startScoreCalls).toEqual([["/static/", result]]);
+  });
+
+  it("skips the score screen when there is no score (no mic was on)", async () => {
+    state().isMaster = true;
+    state().currentPlaybackId = "PB1";
+
+    await splash.endSong("complete", true);
+    expect(startScoreCalls).toEqual([]);
+    expect(socketStub.emitted).toContainEqual(["end_song", "complete", "PB1"]);
   });
 
   it("skips the score screen when the preference disables it", async () => {
     globalThis.PikaraokeConfig.disableScore = true;
+    scoreEndpoint.result = { mics: [{ name: "Mic 1", score: 82 }], combined: null };
     try {
       state().isMaster = true;
       state().currentPlaybackId = "PB1";
 
       await splash.endSong("complete", true);
       expect(startScoreCalls).toEqual([]);
+      expect(scoreEndpoint.requests).toEqual([]);
     } finally {
       globalThis.PikaraokeConfig.disableScore = false;
     }
@@ -236,6 +251,7 @@ describe("endSong", () => {
   it("does not tear down a song that loaded during the score screen", async () => {
     // A second song that starts while the score screen is up has already
     // loaded itself into the player; tearing down now would go black.
+    scoreEndpoint.result = { mics: [{ name: "Mic 1", score: 82 }], combined: null };
     const realStartScore = globalThis.startScore;
     globalThis.startScore = async () => {
       state().currentPlaybackId = "PB2";

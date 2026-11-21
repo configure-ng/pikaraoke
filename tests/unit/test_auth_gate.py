@@ -39,6 +39,7 @@ EXPECTED_PUBLIC_ENDPOINTS = {
     "settings.settings",
     "singers_api.rename_singer",
     "singers_api.set_favourite",
+    "splash.get_score",
     "splash.get_score_phrases",
     "splash.splash",
     "stream.stream_bg_video",

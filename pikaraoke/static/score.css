@@ -37,6 +37,16 @@
 	text-shadow: -1px 1px 5px black;
 }
 
+/* Each mic's own score in a duet, under the combined one. */
+#score-mics-text{
+	position: absolute;
+	width: 100vw;
+	text-align: center;
+	font-size: 2.5rem;
+	top: 75vh;
+	text-shadow: -1px 1px 5px black;
+}
+
 canvas {
 	position: absolute;
 	top: 0;

@@ -128,3 +128,32 @@ class TestHidingTheUrlAndQrCode:
     def test_hiding_the_qr_code_leaves_the_url(self, client):
         assert self._hidden(client, "splash-qr-image", hide_qr_code=True) == [True, True]
         assert self._hidden(client, "splash-url", hide_qr_code=True) == [False, False]
+
+
+class TestScoreEndpoint:
+    """GET /api/splash/score: the real scores the score screen shows."""
+
+    @patch("pikaraoke.routes.splash.get_karaoke_instance")
+    def test_names_each_mic_by_its_number(self, mock_get_instance, client):
+        k = MagicMock()
+        k.score_keeper.result.return_value = {
+            "mics": [{"number": 1, "score": 82}, {"number": 2, "score": 64}],
+            "combined": 73,
+        }
+        mock_get_instance.return_value = k
+
+        response = client.get("/api/splash/score?playback_id=PB1")
+
+        k.score_keeper.result.assert_called_once_with("PB1")
+        assert response.get_json() == {
+            "mics": [{"name": "Mic 1", "score": 82}, {"name": "Mic 2", "score": 64}],
+            "combined": 73,
+        }
+
+    @patch("pikaraoke.routes.splash.get_karaoke_instance")
+    def test_null_when_there_is_nothing_to_score(self, mock_get_instance, client):
+        mock_get_instance.return_value.score_keeper.result.return_value = None
+
+        response = client.get("/api/splash/score?playback_id=PB1")
+
+        assert response.status_code == 200 and response.get_json() is None

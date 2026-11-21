@@ -340,3 +340,115 @@ def test_pactl_volume_sets_the_loopback_not_the_system_mic(tmp_path, monkeypatch
         ("set-sink-input-volume", "300", "150%"),
         ("set-sink-input-volume", "300", "50%"),
     ]
+
+
+class _FakeThread:
+    started: list = []
+
+    def __init__(self, target, args=(), daemon=None):
+        self.target, self.args = target, args
+
+    def start(self):
+        _FakeThread.started.append(self)
+
+
+@pytest.fixture
+def capturing(tmp_path, monkeypatch):
+    """A manager with mic passthrough available and background threads held back."""
+    monkeypatch.setattr(sm, "_HAS_PACTL", True)
+    _FakeThread.started = []
+    monkeypatch.setattr(sm.threading, "Thread", _FakeThread)
+    return _make_manager(tmp_path, enabled=True)
+
+
+def _deliver_once(manager, monkeypatch):
+    """Run the capture delivery loop for a single batch."""
+    monkeypatch.setattr(sm.time, "sleep", lambda _: setattr(manager, "_capture_generation", -1))
+    deliver = next(t for t in _FakeThread.started if t.target == manager._deliver_capture)
+    deliver.target(*deliver.args)
+
+
+def test_capture_copies_a_streamed_mic_to_the_score_keeper(capturing, monkeypatch):
+    """Windows/macOS: the passthrough's own input is copied, no second recording."""
+    passthrough = sm._Passthrough(gain=1.0, out_channels=2, max_queued_blocks=4)
+    capturing._active_mics["5"] = sm._ActiveMic(
+        device_id="5",
+        loopback_module_id=None,
+        passthrough=passthrough,
+        label="USB Mic",
+        samplerate=48000,
+    )
+    received = []
+
+    capturing.set_capture(lambda *args: received.append(args))
+    passthrough.on_input(_pcm(1, 2), 2, None, None)
+    passthrough.on_input(_pcm(3), 1, None, None)
+    _deliver_once(capturing, monkeypatch)
+
+    assert received == [("USB Mic", _pcm(1, 2, 3), 48000)]
+
+
+def test_capture_records_a_pactl_mic_from_its_loopback_source(capturing, monkeypatch):
+    """Linux: parec records the source the loopback plays, echo-cancelled if that is on."""
+    launched = []
+
+    class FakeProcess:
+        def __init__(self, cmd, **kwargs):
+            launched.append(cmd)
+            self.terminated = False
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout):
+            return 0
+
+    monkeypatch.setattr(sm.subprocess, "Popen", FakeProcess)
+    capturing._active_mics["62"] = sm._ActiveMic(
+        device_id="62", loopback_module_id="42", label="Yeti", capture_source="yeti.echo-cancel"
+    )
+
+    capturing.set_capture(lambda *args: None)
+    process = capturing._taps["62"].process
+    capturing.set_capture(None)
+
+    assert launched == [
+        [
+            "parec",
+            "--device=yeti.echo-cancel",
+            "--raw",
+            "--format=s16le",
+            "--rate=16000",
+            "--channels=1",
+            "--latency-msec=50",
+        ]
+    ]
+    assert process.terminated and capturing._taps == {}
+
+
+def test_a_mic_plugged_in_mid_song_joins_the_capture(capturing, monkeypatch):
+    capturing.set_capture(lambda *args: None)
+    passthrough = sm._Passthrough(gain=1.0, out_channels=1, max_queued_blocks=4)
+
+    def plug_in(device_id, volume, **settings):
+        capturing._active_mics[device_id] = sm._ActiveMic(
+            device_id=device_id, loopback_module_id=None, passthrough=passthrough, label="New"
+        )
+        return True
+
+    monkeypatch.setattr(capturing, "_activate_pactl", plug_in)
+    capturing.activate("9", 1.0)
+
+    assert passthrough.tap is not None
+    capturing.deactivate("9")
+    assert passthrough.tap is None and capturing._taps == {}
+
+
+def test_capture_is_a_no_op_without_mic_support(tmp_path, monkeypatch):
+    _FakeThread.started = []
+    monkeypatch.setattr(sm.threading, "Thread", _FakeThread)
+    manager = _make_manager(tmp_path, enabled=False)
+
+    manager.set_capture(lambda *args: None)
+
+    assert _FakeThread.started == []
