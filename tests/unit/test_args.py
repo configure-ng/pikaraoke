@@ -127,3 +127,23 @@ class TestParsePikaraokeArgs:
         monkeypatch.setattr("sys.argv", ["pikaraoke", "--bg-video-path", str(path)])
         args = parse_pikaraoke_args()
         assert args.bg_video_path == str(path)
+
+
+class TestMicPassthroughFlag:
+    """Mic passthrough is on out of the box on Windows only, and overridable both ways."""
+
+    @pytest.mark.parametrize("windows", [True, False])
+    def test_default_follows_platform(self, monkeypatch, windows):
+        monkeypatch.setattr("pikaraoke.lib.args.is_windows", lambda: windows)
+        monkeypatch.setattr("sys.argv", ["pikaraoke"])
+        assert parse_pikaraoke_args().enable_mic_passthrough is windows
+
+    def test_opt_out_on_windows(self, monkeypatch):
+        monkeypatch.setattr("pikaraoke.lib.args.is_windows", lambda: True)
+        monkeypatch.setattr("sys.argv", ["pikaraoke", "--no-enable-mic-passthrough"])
+        assert parse_pikaraoke_args().enable_mic_passthrough is False
+
+    def test_opt_in_elsewhere(self, monkeypatch):
+        monkeypatch.setattr("pikaraoke.lib.args.is_windows", lambda: False)
+        monkeypatch.setattr("sys.argv", ["pikaraoke", "--enable-mic-passthrough"])
+        assert parse_pikaraoke_args().enable_mic_passthrough is True

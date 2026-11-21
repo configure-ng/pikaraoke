@@ -24,6 +24,7 @@ Love PiKaraoke? This project is independently maintained and free for everyone t
 - [Quick Install](#quick-install)
 - [Manual Installation](#manual-installation-advanced-users)
 - [Usage](#usage)
+- [Microphones](#microphones)
 - [Docker](#docker-instructions)
 - [Screenshots](#screenshots)
 - [Contributing](#contributing)
@@ -102,6 +103,16 @@ To upgrade to the latest version of pikaraoke, run:
 ```sh
 uv tool upgrade pikaraoke
 ```
+
+## Microphones
+
+On Windows, plug in a USB microphone (such as a Rock Band / SingStar style game mic) and singers hear themselves through the PC's speakers, with no extra software. USB mics switch on automatically the first time they are detected, including ones plugged in while PiKaraoke is running. Built-in laptop and webcam mics stay off so they cannot feed back.
+
+- Adjust each mic's volume (up to 200% for quiet mics) from the audio settings icon on the home screen, or under Settings > Playback.
+- Switch any mic on or off, and tune latency, under Settings > Playback. Your choices are remembered.
+- Turn the feature off entirely with `pikaraoke --no-enable-mic-passthrough`.
+
+On Linux and macOS, mic passthrough is opt-in: run `pikaraoke --enable-mic-passthrough`. Linux requires `pactl` (`sudo apt install pulseaudio-utils`).
 
 ## Docker instructions
 

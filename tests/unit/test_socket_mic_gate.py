@@ -70,7 +70,7 @@ def make_socket_app(admin: bool):
     sound_manager.get_mic_settings_state.return_value = {}
     sound_manager.set_latency_ms.return_value = {}
     sound_manager.set_echo_cancel.return_value = {}
-    sound_manager.refresh.return_value = []
+    sound_manager.rescan.return_value = []
     sound_manager.load_settings.return_value = {}
 
     karaoke = MagicMock()

@@ -210,7 +210,7 @@ class Karaoke:
         # Set non-preference attributes (not stored in config)
         self.port = port
         self.hide_splash_screen = hide_splash_screen
-        # Experimental launch-only gate: must be re-passed each run, never persisted to config.
+        # Launch-only gate (on by default on Windows), never persisted to config.
         self.enable_mic_passthrough = enable_mic_passthrough
         self.download_path = download_path
         self.log_level = log_level
@@ -292,6 +292,17 @@ class Karaoke:
             preferences=self.preferences,
             events=self.events,
             enabled=self.enable_mic_passthrough,
+        )
+        # Hot-plug rescans happen server-side, so open settings pages are told.
+        self.events.on(
+            "mic_devices_changed",
+            lambda: (
+                self.socketio.emit(
+                    "mic_devices_state", self.sound_manager.get_enriched_devices(), namespace="/"
+                )
+                if self.socketio
+                else None
+            ),
         )
         self.sound_manager.start()
 
