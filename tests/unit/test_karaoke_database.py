@@ -109,7 +109,7 @@ class TestInit:
 
     def test_user_version(self, db):
         ver = db._conn.execute("PRAGMA user_version").fetchone()[0]
-        assert ver == 3
+        assert ver == 4
 
     def test_fresh_schema_has_the_new_v2_columns(self, db):
         assert _NEW_IN_V2 <= _song_columns(db._conn)
@@ -196,7 +196,7 @@ class TestSchemaV2Migration:
         db = KaraokeDatabase(legacy_db_path)
         ver = db._conn.execute("PRAGMA user_version").fetchone()[0]
         db.close()
-        assert ver == 3
+        assert ver == 4
 
     def test_existing_row_survives_with_nulls_in_the_new_columns(self, legacy_db_path):
         db = KaraokeDatabase(legacy_db_path)
@@ -339,6 +339,63 @@ class TestSchemaV3Migration:
         with pytest.raises(sqlite3.IntegrityError):
             db.execute("UPDATE singers SET merged_into = 999 WHERE name = 'Dvae'")
         db.close()
+
+
+class TestSchemaV4Migration:
+    """Generated lyrics: a v3 songs table gains the lyrics columns by ALTER."""
+
+    @pytest.fixture
+    def v3_db_path(self, tmp_path):
+        path = str(tmp_path / "pikaraoke.db")
+        db = KaraokeDatabase(path)
+        db.insert_songs([{"file_path": "/songs/a.mp4", "youtube_id": None, "format": "mp4"}])
+        db.close()
+        conn = sqlite3.connect(path)
+        # Back to v3: SQLite 3.35+ drops columns, which is enough for the test.
+        for column in ("lyrics", "lyrics_status", "lyrics_offset", "lyrics_mode"):
+            conn.execute(f"ALTER TABLE songs DROP COLUMN {column}")
+        conn.execute("PRAGMA user_version = 3")
+        conn.commit()
+        conn.close()
+        return path
+
+    def test_an_existing_song_starts_unlooked_and_off(self, v3_db_path):
+        db = KaraokeDatabase(v3_db_path)
+        row = db.get_lyrics("/songs/a.mp4")
+        db.close()
+        assert (row["lyrics"], row["status"], row["offset"], row["mode"]) == (
+            None,
+            None,
+            0.0,
+            "off",
+        )
+
+    def test_reopening_does_not_re_run_the_migration(self, v3_db_path):
+        for _ in range(3):
+            db = KaraokeDatabase(v3_db_path)
+            db.close()
+
+
+class TestLyrics:
+    def test_a_lookup_and_the_display_choice_are_stored(self, db):
+        db.insert_songs([{"file_path": "/songs/a.mp4", "youtube_id": None, "format": "mp4"}])
+
+        db.set_lyrics("/songs/a.mp4", '{"lines": []}', 7.5)
+        db.set_lyrics_display("/songs/a.mp4", "romaji", 7.0)
+
+        row = db.get_lyrics("/songs/a.mp4")
+        assert (row["status"], row["offset"], row["mode"]) == ("found", 7.0, "romaji")
+
+    def test_nothing_found_is_recorded_and_can_be_forgotten(self, db):
+        db.insert_songs([{"file_path": "/songs/a.mp4", "youtube_id": None, "format": "mp4"}])
+
+        db.set_lyrics("/songs/a.mp4", None)
+        assert db.get_lyrics("/songs/a.mp4")["status"] == "missing"
+        db.forget_lyrics("/songs/a.mp4")
+        assert db.get_lyrics("/songs/a.mp4")["status"] is None
+
+    def test_a_song_not_in_the_library_has_no_row(self, db):
+        assert db.get_lyrics("/songs/missing.mp4") is None
 
 
 class TestSingers:

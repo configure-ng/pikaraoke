@@ -117,7 +117,7 @@ class ScoreKeeper:
         self._set_capture(self.feed)
 
     def _analyse_backing(self, playback_id: str | None, file_path: str, semitones: int) -> None:
-        pcm = _decode_audio(file_path)
+        pcm = decode_audio(file_path)
         if pcm is None:
             return
         chroma = pitch.backing_chroma(pcm)
@@ -218,7 +218,7 @@ class ScoreKeeper:
         return int(round(score)), sung_s
 
 
-def _decode_audio(file_path: str) -> np.ndarray | None:
+def decode_audio(file_path: str) -> np.ndarray | None:
     """A song's audio as mono float samples at pitch.BACKING_SAMPLERATE.
 
     A zipped CDG's audio is the mp3 inside the archive, streamed to ffmpeg.

@@ -30,6 +30,7 @@ from pikaraoke.lib.get_platform import (
 from pikaraoke.lib.karaoke_database import KaraokeDatabase
 from pikaraoke.lib.keep_awake import KeepAwake
 from pikaraoke.lib.library_scanner import LibraryScanner, ScanResult
+from pikaraoke.lib.lyrics import LyricsManager
 from pikaraoke.lib.network import get_ip
 from pikaraoke.lib.play_history_manager import PlayHistoryManager
 from pikaraoke.lib.playback_controller import PlaybackController
@@ -90,6 +91,7 @@ class Karaoke:
     # Microphone manager for server-side mic passthrough
     sound_manager: SoundManager
     score_keeper: ScoreKeeper
+    lyrics_manager: LyricsManager
 
     # Event system and preferences
     events: EventSystem
@@ -355,6 +357,16 @@ class Karaoke:
                 is_paused=playback.is_paused,
             ),
             is_enabled=lambda: not self.preferences.get_or_default("disable_score"),
+        )
+
+        # Looks up timed lyrics for songs, at download and on first play.
+        self.lyrics_manager = LyricsManager(
+            db=self.db,
+            events=self.events,
+            get_now_playing=lambda: playback.now_playing_filename,
+            get_query=self._lyrics_query,
+            get_duration=self.db.get_duration,
+            notify=self.update_now_playing_socket,
         )
 
         # Initialize and start download manager
@@ -857,7 +869,17 @@ class Karaoke:
             # too. The KJ singer field gates on this, and session_changed emits
             # this payload, so starting a session elsewhere updates it live.
             "has_session": self.play_history.has_active_session(),
+            # Whether the playing song has lyrics to show, and how they are shown.
+            "now_playing_lyrics": self.lyrics_manager.state(
+                self.playback_controller.now_playing_filename
+            ),
         }
+
+    def _lyrics_query(self, song_path: str, row: dict) -> str:
+        """What to search lyrics by: the metadata found for the song, else its name."""
+        if row.get("artist") and row.get("title"):
+            return f"{row['title']} - {row['artist']}"
+        return self.song_manager.filename_from_path(song_path, remove_youtube_id=True, tidy=True)
 
     def _relay_to_browser(self, event: str) -> None:
         """Forward a payload-free manager event to the browser under the same name.
@@ -881,6 +903,7 @@ class Karaoke:
         this event resolves against a song the library already knows about.
         """
         self.song_manager.register_download(song_path)
+        self.lyrics_manager.request(song_path)
         if self.socketio:
             self.socketio.emit(
                 "song_downloaded",

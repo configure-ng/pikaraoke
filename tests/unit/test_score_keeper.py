@@ -56,7 +56,9 @@ class _Song:
     """A ScoreKeeper over a fake playback whose position the test drives."""
 
     def __init__(self, monkeypatch, semitones=0, enabled=True, backing=None):
-        monkeypatch.setattr(sk, "_decode_audio", lambda path: _backing() if backing is None else backing)
+        monkeypatch.setattr(
+            sk, "decode_audio", lambda path: _backing() if backing is None else backing
+        )
         self.events = EventSystem()
         self.state = PlaybackState("PB1", "/songs/song.mp4", semitones, None, False)
         self.captures = []
@@ -153,7 +155,7 @@ def test_mics_are_captured_only_while_a_song_plays(monkeypatch):
 def test_disabled_scoring_listens_to_nothing(monkeypatch):
     decoded = []
     song = _Song(monkeypatch, enabled=False)
-    monkeypatch.setattr(sk, "_decode_audio", lambda path: decoded.append(path))
+    monkeypatch.setattr(sk, "decode_audio", lambda path: decoded.append(path))
 
     song.events.emit("playback_started")
 
@@ -162,9 +164,9 @@ def test_disabled_scoring_listens_to_nothing(monkeypatch):
 
 
 def test_an_undecodable_song_has_no_score(monkeypatch):
-    monkeypatch.setattr(sk, "_decode_audio", lambda path: None)
+    monkeypatch.setattr(sk, "decode_audio", lambda path: None)
     song = _Song(monkeypatch)
-    monkeypatch.setattr(sk, "_decode_audio", lambda path: None)
+    monkeypatch.setattr(sk, "decode_audio", lambda path: None)
 
     assert song.play(mic=_sing(in_tune)) is None
 
@@ -182,7 +184,7 @@ class TestDecodeAudio:
         return calls
 
     def test_decodes_a_song_file_to_mono_floats(self, ffmpeg):
-        samples = sk._decode_audio("/songs/song.mp4")
+        samples = sk.decode_audio("/songs/song.mp4")
 
         cmd, stdin = ffmpeg[0]
         assert cmd[:2] == ["ffmpeg", "-nostdin"] and "/songs/song.mp4" in cmd and stdin is None
@@ -195,7 +197,7 @@ class TestDecodeAudio:
             z.writestr("Song.cdg", b"graphics")
             z.writestr("Song.MP3", b"mp3 bytes")
 
-        sk._decode_audio(str(archive))
+        sk.decode_audio(str(archive))
 
         cmd, stdin = ffmpeg[0]
         assert "-nostdin" not in cmd and cmd[cmd.index("-i") + 1] == "pipe:0"

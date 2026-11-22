@@ -296,6 +296,8 @@ class MockKaraoke:
         self.play_history = MockPlayHistory()
         # A stand-in for the singers table; rename tests configure its find().
         self.singer_manager = MagicMock()
+        self.lyrics_manager = MagicMock()
+        self.lyrics_manager.state.return_value = None
         self.singer_manager.find.return_value = None
         self.volume = 0.85
         self.running = True
