@@ -31,6 +31,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The note chart add-on (see pikaraoke/lib/chart_maker.py): several gigabytes
+# of PyTorch, so not installed unless asked for. Install with the right
+# PyTorch for the graphics card and the beartype override, as the installers
+# do: uv tool install --torch-backend auto --overrides <file with
+# "beartype>=0.22"> "pikaraoke[charts] @ ..."
+charts = [
+  "torch>=2.6",
+  "torchcrepe>=0.0.24",
+  "audio-separator>=0.48",
+  "onnxruntime>=1.20",
+  "audioread>=3.0",
+]
 dev = [
   "pre-commit>=3.7.1",
   "pytest>=9.0.2",
@@ -95,3 +107,7 @@ omit = [
     "pikaraoke/lib/current_app.py",
     "pikaraoke/lib/args.py",
 ]
+
+[tool.uv]
+# audio-separator pins beartype below 0.19, which fails on Python 3.14.
+override-dependencies = ["beartype>=0.22"]

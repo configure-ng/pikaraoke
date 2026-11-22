@@ -16,9 +16,7 @@ _KANA = re.compile(r"[ぁ-ゖァ-ヺ]")
 _KANJI = re.compile(r"[㐀-䶿一-鿿豈-﫿々]")
 # Stretches of Japanese script. Everything between them (English, digits,
 # spaces, punctuation) is kept as written rather than tokenized.
-_JAPANESE_RUN = re.compile(
-    r"[ぁ-ゟ゠-ヿ㐀-䶿一-鿿豈-﫿々〆ヶ]+"
-)
+_JAPANESE_RUN = re.compile(r"[ぁ-ゟ゠-ヿ㐀-䶿一-鿿豈-﫿々〆ヶ]+")
 
 # Hepburn, as karaoke romaji writes it: long vowels spelled out (kyou, riyuu).
 # fmt: off
@@ -83,8 +81,7 @@ def _get_tagger():
 def _words(japanese: str) -> list[tuple[str, str | None, str, str]]:
     """(surface, katakana reading or None, part of speech, its subtype) per word."""
     return [
-        (w.surface, w.feature.kana, w.feature.pos1, w.feature.pos2)
-        for w in _get_tagger()(japanese)
+        (w.surface, w.feature.kana, w.feature.pos1, w.feature.pos2) for w in _get_tagger()(japanese)
     ]
 
 
@@ -117,7 +114,9 @@ def _kana_run(japanese: str) -> str:
 
 def to_romaji(line: str) -> str:
     """The line in Hepburn romaji, spaced by word the way karaoke romaji is."""
-    out = _convert(line, lambda run: f" {_romaji_run(run)} ", lambda t: t.translate(_ROMAJI_PUNCTUATION))
+    out = _convert(
+        line, lambda run: f" {_romaji_run(run)} ", lambda t: t.translate(_ROMAJI_PUNCTUATION)
+    )
     out = re.sub(r"\s+", " ", out)
     out = re.sub(r"\s+([,.!?)\]])", r"\1", out)
     out = re.sub(r"([(\[])\s+", r"\1", out).strip()
@@ -140,6 +139,8 @@ def _romaji_run(japanese: str) -> str:
             and not last.startswith(_DONE)
             and (
                 last.endswith("っ")
+                # だって, split into だ and って: itsu datte, not itsu da tte.
+                or (surface == "って" and last == "だ")
                 or pos == "接尾辞"
                 or (pos == "助詞" and subtype == "接続助詞" and surface in _JOINING_PARTICLES)
                 or (

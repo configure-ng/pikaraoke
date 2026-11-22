@@ -298,6 +298,9 @@ class MockKaraoke:
         self.singer_manager = MagicMock()
         self.lyrics_manager = MagicMock()
         self.lyrics_manager.state.return_value = None
+        self.chart_manager = MagicMock()
+        self.chart_manager.status.return_value = None
+        self.chart_manager.available = False
         self.singer_manager.find.return_value = None
         self.volume = 0.85
         self.running = True

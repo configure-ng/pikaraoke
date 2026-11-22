@@ -6,6 +6,7 @@ from collections.abc import Callable
 from functools import wraps
 
 from flask import request
+from flask_socketio import join_room
 
 from pikaraoke.lib.current_app import get_karaoke_instance, is_admin
 
@@ -168,6 +169,8 @@ def setup_socket_events(socketio):
         sid = request.sid
         splash_connections.add(sid)
         splash_liveness[sid] = time.monotonic()
+        # Mic pitch for the note guide goes to this room only.
+        join_room("splash")
         logging.info(f"Splash screen registered: {sid}")
 
     @open_to_room("playback_position")

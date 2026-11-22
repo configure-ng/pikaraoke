@@ -26,6 +26,7 @@ Love PiKaraoke? This project is independently maintained and free for everyone t
 - [Usage](#usage)
 - [Microphones](#microphones)
 - [Lyrics](#lyrics-for-videos-without-them)
+- [Note guide](#note-guide-and-note-charts)
 - [Docker](#docker-instructions)
 - [Screenshots](#screenshots)
 - [Contributing](#contributing)
@@ -131,7 +132,20 @@ Lyrics stay off until someone turns them on. While a song plays, the **Lyrics** 
 - **Off / Romaji / Kana** for Japanese songs. Romaji spells the words in the Latin alphabet; kana spells every kanji out in hiragana.
 - **Earlier / Later** nudges the timing half a second at a time, if the lines run ahead of or behind the music.
 
-Japanese readings come from a dictionary and are right for most lyrics, but a poetic reading a lyricist chose on purpose can come out as the word's usual one. Songs LRCLIB does not have get no lyrics. Lyrics show a line at a time, without a word-by-word wipe.
+Japanese readings come from a dictionary and are right for most lyrics, but a poetic reading a lyricist chose on purpose can come out as the word's usual one. Songs LRCLIB does not have get no lyrics. Lyrics show a line at a time; with a note chart (below), the line fills in as it is sung.
+
+## Note guide and note charts
+
+While a song plays, the TV can draw a note guide across the top of the screen: each mic's pitch as a line, moving as it is sung. Anyone can turn it on or off with the **Notes** buttons on the home page.
+
+With the **note chart add-on**, the guide also shows the song's melody as bars scrolling toward a "now" line, and they fill in where a singer hits them. Karaoke videos carry no melody, so the add-on makes one from the song's original recording: it separates the singer's voice out of the music with a neural network, tracks its pitch, and turns that into notes. It uses the same original recording the lyrics are lined up against, or finds one on YouTube by name and checks it against the video. Songs with a chart are scored by the notes hit (an octave up or down counts); songs without one are scored as before.
+
+- Charts are made in the background, one song at a time, when a song is downloaded or first played. **Settings > Note charts** can make them for the whole library.
+- A chart takes about 30 seconds on a modern graphics card and a few minutes on the CPU. AMD cards compile their kernels the first time, which takes several minutes once.
+- **Earlier / Later** moves the lyrics and the note bars together.
+- Charts are made by machine, so expect most notes to be right, not all: backing vocals, harmonies and very fast passages can confuse them.
+
+The add-on is optional because it is large: PyTorch and the models take 3-6 GB with an NVIDIA card, about 15 GB with an AMD card on Linux. The installers ask whether to add it (or pass `--charts` to `install.sh`, `-Charts` to `install.ps1`), and pick the PyTorch build for the graphics card: CUDA for NVIDIA, ROCm for AMD on Linux, otherwise the CPU.
 
 ## Docker instructions
 

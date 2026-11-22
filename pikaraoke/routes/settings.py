@@ -42,6 +42,8 @@ def settings():
         disable_bg_music=k.disable_bg_music,
         disable_bg_video=k.disable_bg_video,
         disable_score=k.disable_score,
+        make_charts=k.preferences.get_or_default("make_charts"),
+        charts_available=k.chart_manager.available,
         hide_notifications=k.hide_notifications,
         show_splash_clock=k.show_splash_clock,
         hide_url=k.hide_url,

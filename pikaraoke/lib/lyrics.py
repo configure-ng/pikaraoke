@@ -13,7 +13,6 @@ background. The TV shows them only when someone turns them on, per song.
 
 import json
 import logging
-import os
 import re
 import tempfile
 from collections.abc import Callable
@@ -52,15 +51,27 @@ _ORIGINAL_DURATION_SLACK_S = 4.0
 # The best alignment must beat the best one elsewhere by this ratio to be
 # trusted; measured peaks run 2-3x, a song against a different song ~1.1x.
 _MIN_PEAK_RATIO = 1.4
+# Search results tried against the video when looking for an original by name.
+_MAX_ORIGINALS_TRIED = 3
 # Lags this close to the best (in chroma rows) are the same peak, not a rival.
 _PEAK_WIDTH_ROWS = 20
 
 
 @dataclass
 class Found:
-    """What a lookup found: the lyrics row JSON, and how far to shift it."""
+    """What a lookup found: the lyrics row JSON, how far to shift it, and the
+    YouTube URL of the original recording it was lined up against, if any."""
 
     lyrics: str
+    offset: float
+    original: str | None = None
+
+
+@dataclass
+class Aligned:
+    """An original recording found on YouTube and where it sits against the video."""
+
+    url: str
     offset: float
 
 
@@ -178,21 +189,22 @@ def _cross_correlate(a: np.ndarray, b: np.ndarray, max_lag: int) -> tuple[np.nda
     return lags, full[lags % size] / np.maximum(overlap, 1)
 
 
-def find_original(entry: dict) -> str | None:
-    """A YouTube URL for the recording the lyrics were timed against, if one turns up."""
+def find_original(entry: dict) -> list[str]:
+    """YouTube URLs that may be the recording the lyrics were timed against, best first."""
     query = f"{entry.get('artistName', '')} {entry.get('trackName', '')}".strip()
     try:
         results = get_search_results(query)
     except Exception as e:  # yt-dlp failing must not fail the lookup
         logging.warning(f"Lyrics: no original found for {query!r}: {e}")
-        return None
+        return []
+    urls = []
     for result in results:
         seconds = _seconds(result.duration)
         if seconds is None or _NOT_THE_SONG.search(result.title):
             continue
         if abs(seconds - entry.get("duration", 0)) <= _ORIGINAL_DURATION_SLACK_S:
-            return result.url
-    return None
+            urls.append(result.url)
+    return urls[:_MAX_ORIGINALS_TRIED]
 
 
 def _seconds(duration: str) -> int | None:
@@ -203,11 +215,19 @@ def _seconds(duration: str) -> int | None:
 
 def measure_offset(
     song_path: str, entry: dict, run: Callable = lambda f, *args: f(*args)
-) -> float | None:
-    """Line the lyrics up with this video: seconds to add to their timings."""
-    url = find_original(entry)
-    if url is None:
-        return None
+) -> Aligned | None:
+    """Line the lyrics up with this video: the original they follow, and the
+    seconds to add to their timings."""
+    # The first match can be age-restricted or region-locked; try the next.
+    for url in find_original(entry):
+        offset = align_to(song_path, url, run)
+        if offset is not None:
+            return Aligned(url, offset)
+    return None
+
+
+def align_to(song_path: str, url: str, run: Callable = lambda f, *args: f(*args)) -> float | None:
+    """Seconds this video runs behind the recording at url, or None if they do not match."""
     with tempfile.TemporaryDirectory(prefix="pikaraoke-lyrics-") as tmp:
         original_path = download_audio(url, tmp)
         if original_path is None:
@@ -218,6 +238,40 @@ def measure_offset(
         return run(
             lambda: alignment_offset(pitch.backing_chroma(karaoke), pitch.backing_chroma(original))
         )
+
+
+def locate_original(
+    song_path: str,
+    query: str,
+    duration: float | None,
+    run: Callable = lambda f, *args: f(*args),
+) -> Aligned | None:
+    """Find the original recording of a song by searching YouTube for it.
+
+    For songs with no lyrics entry to say which recording to look for: each
+    likely result is tried against the video, and the first whose music lines
+    up with it is taken. A cover or another song does not line up.
+    """
+    try:
+        results = get_search_results(query)
+    except Exception as e:  # yt-dlp failing must not fail the lookup
+        logging.warning(f"Original: search for {query!r} failed: {e}")
+        return None
+    tried = 0
+    for result in results:
+        seconds = _seconds(result.duration)
+        if seconds is None or _NOT_THE_SONG.search(result.title):
+            continue
+        if duration and abs(seconds - duration) > _MAX_OFFSET_S:
+            continue
+        offset = align_to(song_path, result.url, run)
+        if offset is not None:
+            logging.info(f"Original: {result.title!r} lines up, {offset:+.1f}s against the video")
+            return Aligned(result.url, offset)
+        tried += 1
+        if tried >= _MAX_ORIGINALS_TRIED:
+            break
+    return None
 
 
 def find_lyrics(
@@ -233,13 +287,17 @@ def find_lyrics(
         return None
     lyrics = run(build_lyrics, lines)
     lyrics["source"] = {"lrclib_id": entry.get("id"), "duration": entry.get("duration")}
-    offset = measure_offset(song_path, entry, run)
-    lyrics["aligned"] = offset is not None
+    aligned = measure_offset(song_path, entry, run)
+    lyrics["aligned"] = aligned is not None
     logging.info(
         f"Lyrics: found {entry.get('trackName')!r} by {entry.get('artistName')!r}"
-        + (f", {offset:+.1f}s against the video" if offset is not None else ", unaligned")
+        + (f", {aligned.offset:+.1f}s against the video" if aligned else ", unaligned")
     )
-    return Found(lyrics=json.dumps(lyrics, ensure_ascii=False), offset=offset or 0.0)
+    return Found(
+        lyrics=json.dumps(lyrics, ensure_ascii=False),
+        offset=aligned.offset if aligned else 0.0,
+        original=aligned.url if aligned else None,
+    )
 
 
 def _in_thread(f: Callable, *args):
@@ -264,6 +322,7 @@ class LyricsManager:
         run: Callable = _in_thread,
     ) -> None:
         self._db = db
+        self._events = events
         self._get_now_playing = get_now_playing
         self._get_query = get_query
         self._get_duration = get_duration
@@ -310,6 +369,8 @@ class LyricsManager:
                 finally:
                     self._searching = None
                 self._changed(song)
+                # The note chart is made from the original the lookup found.
+                self._events.emit("lyrics_looked_up", song)
         finally:
             self._working = False
 
@@ -324,6 +385,8 @@ class LyricsManager:
             self._db.set_lyrics(song_path, None)
         else:
             self._db.set_lyrics(song_path, found.lyrics, found.offset)
+            if found.original:
+                self._db.set_original(song_path, found.original, found.offset)
 
     def _changed(self, song_path: str) -> None:
         if song_path == self._get_now_playing():

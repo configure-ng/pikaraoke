@@ -44,6 +44,29 @@
 					clearTimeout(timeoutId);
 				});
 			})
+			function showChartProgress() {
+				$.get("{{ url_for('notes.status') }}").done(function (status) {
+					var $progress = $("#chart-progress");
+					if (!status.making) {
+						$progress.text("");
+						return;
+					}
+					// {# MSG: Progress of note chart making in settings; %(count)s is how many more songs are waiting. #}
+					var waiting = {{ _('Making note charts: %(count)s more waiting.', count='COUNT') | tojson }};
+					$progress.text(waiting.replace("COUNT", status.queued));
+					setTimeout(showChartProgress, 5000);
+				});
+			}
+			if ($("#make-all-charts").length) showChartProgress();
+			$("#make-all-charts").click(function () {
+				$.post("{{ url_for('notes.make_all') }}").done(function (result) {
+					// {# MSG: Notification after queueing note charts; %(count)s is the number of songs. #}
+					var queued = {{ _('Making note charts for %(count)s songs in the background.', count='COUNT') | tojson }};
+					showNotification(queued.replace("COUNT", result.queued), "is-success");
+					setTimeout(showChartProgress, 1000);
+				});
+			});
+
 			$(".user-preference-checkbox").click(function() {
 				let val = $(this).is(":checked") ? "True" : "False";
 				let pref = $(this).attr("data-pref");
@@ -654,6 +677,41 @@
 					{# MSG: Button which saves the score phrases entered in the three boxes above it. #}
 					<a id="save-phrases" class="button is-fullwidth is-primary mt-5">{% trans %}Save phrases{% endtrans %}</a>
 				</div>
+			</div>
+
+			<hr class="my-0">
+
+			<header class="card-header py-3 px-5 collapsible-header is-collapsed">
+				<div>
+					{# MSG: Header of the settings section for note charts: the melody of each song as notes to sing along to. #}
+					<h3 class="m-0">{% trans %}Note charts{% endtrans %}</h3>
+					{# MSG: One-line summary under the Note charts heading. #}
+					<span class="section-summary is-size-7 has-text-grey-light">{% trans %}Melody bars on the TV, made from each song's original recording{% endtrans %}</span>
+				</div>
+			</header>
+			<div class="collapsible-content panel is-shadowless mb-0">
+				{% if charts_available %}
+				<label class="panel-block px-5 py-3 is-justify-content-space-between">
+					<span>
+						{# MSG: Checkbox label for making note charts for new songs automatically. #} {% trans %}Make note charts for new songs{% endtrans %}
+						{# MSG: Help text under the note chart setting. #}
+						<span class="is-block is-size-7 has-text-grey-light">{% trans %}The singer's voice is separated out of the song's original recording and its melody turned into notes. Songs with a chart are scored by the notes hit.{% endtrans %}</span>
+					</span>
+					<input id="pref-make-charts" type="checkbox" class="user-preference-checkbox switch ml-4 mr-0" data-pref="make_charts" {% if make_charts == True %}checked{% endif %}>
+				</label>
+				<div class="panel-block is-block px-5 py-3">
+					{# MSG: Button that makes note charts for every song in the library that has none. #}
+					<a id="make-all-charts" class="button is-fullwidth">{% trans %}Make charts for the whole library{% endtrans %}</a>
+					<p id="chart-progress" class="is-size-7 has-text-grey-light mt-2"></p>
+				</div>
+				{% else %}
+				<div class="panel-block is-block px-5 py-3">
+					{# MSG: Shown in settings when the note chart add-on is not installed. #}
+					<p>{% trans %}Note charts need the chart add-on, which is not installed. Run the installer again and choose to add it.{% endtrans %}</p>
+					{# MSG: Help text explaining what the note chart add-on needs. #}
+					<p class="is-size-7 has-text-grey-light mt-1">{% trans %}It downloads several gigabytes and works best with an NVIDIA or AMD graphics card. Without it, the TV still draws each singer's pitch.{% endtrans %}</p>
+				</div>
+				{% endif %}
 			</div>
 
 			<hr class="my-0">

@@ -1,8 +1,10 @@
 """Scores singing from the mics against the song that is playing.
 
-Each song's backing track is analysed when it starts (see pitch.py for how),
-mic audio is pitch-tracked while it plays, and the score screen asks for the
-result when it ends. Nothing is scored without a mic, so the screen is skipped.
+Mic audio is pitch-tracked while a song plays, streamed to the TV as it comes
+(for the note guide), and scored when the song ends. A song with a note chart
+is scored by the notes of its melody hit; one without, by how well the singing
+fits the backing track's harmony, analysed when the song starts (see pitch.py).
+Nothing is scored without a mic, so the score screen is skipped.
 """
 
 import logging
@@ -17,6 +19,7 @@ import numpy as np
 from gevent import spawn
 
 from pikaraoke.lib import pitch
+from pikaraoke.lib.chart import MelodyIndex, Note, fold_octave
 from pikaraoke.lib.events import EventSystem
 
 _FRAME_HOP_S = 0.02
@@ -30,6 +33,8 @@ _HARMONY_CONTEXT_ROWS = 3
 _MIN_LEVEL = 0.008
 _GATE_OVER_FLOOR = 4.0
 _FLOOR_PERCENTILE = 10
+_GATE_UNDER_LOUD = 0.25
+_LOUD_PERCENTILE = 95
 
 # Songs are mostly sung, with breaths, gaps and solos: a singer voicing this
 # share of the song has sung all of it.
@@ -44,6 +49,23 @@ _FIT_OF_NO_SKILL = 0.15
 _FIT_OF_FULL_SKILL = 0.5
 # Share of the score that showing up and singing earns, accuracy the rest.
 _EFFORT_SHARE = 0.15
+
+# A chart note counts as sung in full when this share of it carries singing on
+# the note: consonants, breaths and onsets take the rest.
+_FULL_NOTE_SHARE = 0.6
+# Singing within _NOTE_SLACK of a chart note, in semitones, is on it; beyond,
+# credit falls away with _NOTE_TOLERANCE, to a tenth at a semitone off.
+_NOTE_SLACK = 0.25
+_NOTE_TOLERANCE = 0.35
+# Mean note score mapped to 0-1 accuracy, as for harmony: calibrated on
+# synthetic singing, the melody sung with vibrato and drift scores ~0.8, the
+# melody a semitone off ~0.25 and random notes ~0.1.
+_NOTES_OF_NO_SKILL = 0.15
+_NOTES_OF_FULL_SKILL = 0.7
+
+# Live pitch for the TV: a mic's recent loudness levels, from which its quiet
+# floor is judged as for scoring.
+_LIVE_LEVELS = 250
 
 # Ahead of the last position report, playback is assumed to run on at most
 # this far; reports come each second, so a stall shows within a beat.
@@ -76,6 +98,14 @@ class _Backing:
     song_profile: np.ndarray
 
 
+@dataclass
+class Melody:
+    """A song's chart notes, in its recording's time, and the offset onto the video."""
+
+    notes: list[Note]
+    offset: float
+
+
 class ScoreKeeper:
     """Turns mic audio during a song into a score for each singer."""
 
@@ -86,14 +116,19 @@ class ScoreKeeper:
         get_playback: Callable[[], PlaybackState],
         is_enabled: Callable[[], bool] = lambda: True,
         spawn: Callable = spawn,
+        get_melody: Callable[[str], Melody | None] = lambda path: None,
+        on_pitch: Callable[[dict], None] | None = None,
     ) -> None:
         self._set_capture = set_capture
         self._get_playback = get_playback
         # Checked per song, so the score setting applies from the next one.
         self._is_enabled = is_enabled
         self._spawn = spawn
+        self._get_melody = get_melody
+        self._on_pitch = on_pitch
         self._playback_id: str | None = None
         self._backing: _Backing | None = None
+        self._melody: MelodyIndex | None = None
         self._mics: dict[str, _MicTrack] = {}
         self._anchor: tuple[float, float] | None = None
         events.on("playback_started", self._on_playback_started)
@@ -103,11 +138,15 @@ class ScoreKeeper:
         playback = self._get_playback()
         self._playback_id = playback.playback_id
         self._backing = None
+        self._melody = None
         self._mics = {}
         self._anchor = None
         if not self._is_enabled():
             return
-        if playback.file_path:
+        melody = self._get_melody(playback.file_path) if playback.file_path else None
+        if melody and melody.notes:
+            self._melody = MelodyIndex(melody.notes, melody.offset, playback.semitones)
+        elif playback.file_path:
             self._spawn(
                 self._analyse_backing,
                 playback.playback_id,
@@ -143,6 +182,7 @@ class ScoreKeeper:
         buffered = np.concatenate((track.pending, samples))
         # Frames end at the newest sample, which is at `position`.
         n_frames = max(0, 1 + (len(buffered) - frame_len) // hop)
+        first = len(track.notes)
         for i in range(n_frames):
             frame = buffered[i * hop : i * hop + frame_len]
             track.positions.append(position - (len(buffered) - i * hop - frame_len) / samplerate)
@@ -150,6 +190,26 @@ class ScoreKeeper:
             frequency = pitch.detect_pitch(frame, samplerate)
             track.notes.append(None if frequency is None else pitch.midi_note(frequency))
         track.pending = buffered[n_frames * hop :]
+        if self._on_pitch is not None and n_frames:
+            self._send_pitch(mic, track, first)
+
+    def _send_pitch(self, mic: str, track: _MicTrack, first: int) -> None:
+        """Tell the TV what a mic just sang: [song position, note or None] per frame."""
+        gate = _gate(np.array(track.levels[-_LIVE_LEVELS:]))
+        frames = [
+            [
+                round(position, 3),
+                round(float(note), 2) if note is not None and level >= gate else None,
+            ]
+            for position, level, note in zip(
+                track.positions[first:], track.levels[first:], track.notes[first:]
+            )
+        ]
+        self._on_pitch({"mic": self.mic_number(mic), "frames": frames})
+
+    def mic_number(self, mic: str) -> int:
+        """Mics are numbered in name order, as on the score screen."""
+        return sorted(self._mics).index(mic) + 1
 
     def _position(self) -> float | None:
         """Current song position, interpolated between the once-a-second reports."""
@@ -171,11 +231,11 @@ class ScoreKeeper:
         """
         if playback_id is None or playback_id != self._playback_id:
             return None
-        if self._backing is None or not self._mics:
+        if (self._backing is None and self._melody is None) or not self._mics:
             return None
 
         scored = [
-            (number, mic, *self._score(track, self._backing))
+            (number, mic, *self._score(track))
             for number, (mic, track) in enumerate(sorted(self._mics.items()), start=1)
         ]
         singers = [entry for entry in scored if entry[3] >= _MIN_SUNG_S]
@@ -187,12 +247,55 @@ class ScoreKeeper:
             "combined": round(sum(scores) / len(scores)) if len(scores) > 1 else None,
         }
 
-    def _score(self, track: _MicTrack, backing: _Backing) -> tuple[int, float]:
+    def _score(self, track: _MicTrack) -> tuple[int, float]:
         """A mic's score from 0 to 99, and how many seconds of singing it carried."""
         if not track.levels:
             return 0, 0.0
+        if self._melody is not None:
+            return self._score_notes(track, self._melody)
+        return self._score_harmony(track, self._backing)
+
+    def _score_notes(self, track: _MicTrack, melody: MelodyIndex) -> tuple[int, float]:
+        """Scored by the chart: how much of each note was sung on it, octave aside."""
         levels = np.array(track.levels)
-        gate = max(_MIN_LEVEL, _GATE_OVER_FLOOR * np.percentile(levels, _FLOOR_PERCENTILE))
+        gate = _gate(levels)
+        sung = np.zeros(len(melody))
+        sung_s = 0.0
+        for position, level, note in zip(track.positions, levels, track.notes):
+            if note is None or level < gate:
+                continue
+            sung_s += _FRAME_HOP_S
+            i = melody.at(position)
+            if i is None:
+                continue
+            target = melody.pitch(i)
+            off = abs(fold_octave(note, target) - target)
+            sung[i] += _FRAME_HOP_S * np.exp(
+                -0.5 * (max(0.0, off - _NOTE_SLACK) / _NOTE_TOLERANCE) ** 2
+            )
+
+        if sung_s < _FRAME_HOP_S:
+            return 0, 0.0
+        # Only the notes in the stretch the mic listened to count.
+        start, end = min(track.positions), max(track.positions)
+        heard = [i for i in range(len(melody)) if start <= melody.start(i) < end]
+        if not heard:
+            return 0, sung_s
+        lengths = np.array([melody.length(i) for i in heard])
+        shares = np.minimum(1.0, sung[heard] / (_FULL_NOTE_SHARE * lengths))
+        accuracy = np.clip(
+            (np.average(shares, weights=lengths) - _NOTES_OF_NO_SKILL)
+            / (_NOTES_OF_FULL_SKILL - _NOTES_OF_NO_SKILL),
+            0,
+            1,
+        )
+        score = 99 * (_EFFORT_SHARE + (1 - _EFFORT_SHARE) * accuracy)
+        return int(round(score)), sung_s
+
+    def _score_harmony(self, track: _MicTrack, backing: _Backing) -> tuple[int, float]:
+        """Scored by the backing track: how well the notes sung fit its chords."""
+        levels = np.array(track.levels)
+        gate = _gate(levels)
 
         fits = []
         for position, level, note in zip(track.positions, levels, track.notes):
@@ -216,6 +319,19 @@ class ScoreKeeper:
         )
         score = 99 * (_EFFORT_SHARE + (1 - _EFFORT_SHARE) * accuracy) * participation
         return int(round(score)), sung_s
+
+
+def _gate(levels: np.ndarray) -> float:
+    """The level a frame must reach to count as singing on this mic.
+
+    Over the mic's quiet floor, but never over a share of its loud moments: a
+    singer who has not paused yet has no quiet floor to measure.
+    """
+    if len(levels) == 0:
+        return _MIN_LEVEL
+    floor = _GATE_OVER_FLOOR * float(np.percentile(levels, _FLOOR_PERCENTILE))
+    loud = _GATE_UNDER_LOUD * float(np.percentile(levels, _LOUD_PERCENTILE))
+    return max(_MIN_LEVEL, min(floor, loud))
 
 
 def decode_audio(file_path: str) -> np.ndarray | None:

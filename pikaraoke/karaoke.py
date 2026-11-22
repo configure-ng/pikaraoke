@@ -13,6 +13,7 @@ import qrcode
 from flask_babel import _
 from qrcode.image.pure import PyPNGImage
 
+from pikaraoke.lib.chart_manager import ChartManager
 from pikaraoke.lib.download_manager import DownloadManager
 from pikaraoke.lib.duration_populator import DurationPopulator
 from pikaraoke.lib.events import EventSystem
@@ -92,6 +93,7 @@ class Karaoke:
     sound_manager: SoundManager
     score_keeper: ScoreKeeper
     lyrics_manager: LyricsManager
+    chart_manager: ChartManager
 
     # Event system and preferences
     events: EventSystem
@@ -356,7 +358,13 @@ class Karaoke:
                 position=playback.now_playing_position,
                 is_paused=playback.is_paused,
             ),
-            is_enabled=lambda: not self.preferences.get_or_default("disable_score"),
+            # Mics are listened to for the note guide too, score or not; the
+            # score screen itself checks disable_score.
+            is_enabled=lambda: not self.preferences.get_or_default("disable_score")
+            or self.preferences.get_or_default("note_guide"),
+            # Bound late: the chart manager is built below.
+            get_melody=lambda path: self.chart_manager.melody(path),
+            on_pitch=self._send_pitch,
         )
 
         # Looks up timed lyrics for songs, at download and on first play.
@@ -367,6 +375,18 @@ class Karaoke:
             get_query=self._lyrics_query,
             get_duration=self.db.get_duration,
             notify=self.update_now_playing_socket,
+        )
+
+        # Makes note charts with the chart add-on, after each lyrics lookup.
+        self.chart_manager = ChartManager(
+            db=self.db,
+            events=self.events,
+            model_dir=os.path.join(get_data_directory(), "models"),
+            get_now_playing=lambda: playback.now_playing_filename,
+            get_query=self._lyrics_query,
+            get_duration=self.db.get_duration,
+            notify=self.update_now_playing_socket,
+            is_enabled=lambda: bool(self.preferences.get_or_default("make_charts")),
         )
 
         # Initialize and start download manager
@@ -873,7 +893,35 @@ class Karaoke:
             "now_playing_lyrics": self.lyrics_manager.state(
                 self.playback_controller.now_playing_filename
             ),
+            # The note chart: 'making', 'found', 'missing', 'failed' or None,
+            # and whether the TV draws the note guide.
+            "now_playing_chart": self.chart_manager.status(
+                self.playback_controller.now_playing_filename
+            ),
+            "note_guide": bool(self.preferences.get_or_default("note_guide")),
+            "charts_available": self.chart_manager.available,
         }
+
+    def _send_pitch(self, pitch: dict) -> None:
+        """Stream a mic's pitch to the TVs only: phones have no use for it."""
+        if self.socketio:
+            self.socketio.emit("pitch", pitch, room="splash", namespace="/")
+
+    def make_all_charts(self) -> int:
+        """Queue a chart for every song without one; how many were queued.
+
+        Songs never looked up for lyrics go through that first: it may find the
+        original recording, and the chart follows when it ends.
+        """
+        queued = 0
+        for path in self.db.get_paths_without_chart():
+            row = self.db.get_lyrics(path)
+            if row is not None and row["status"] is None:
+                self.lyrics_manager.request(path)
+            else:
+                self.chart_manager.request(path)
+            queued += 1
+        return queued
 
     def _lyrics_query(self, song_path: str, row: dict) -> str:
         """What to search lyrics by: the metadata found for the song, else its name."""

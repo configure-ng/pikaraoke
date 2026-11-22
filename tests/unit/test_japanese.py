@@ -18,6 +18,7 @@ from pikaraoke.lib import japanese
         # Auxiliaries that are words of their own stay apart.
         ("夢ならばどれほどよかったでしょう", "Yume naraba dore hodo yokatta deshou"),
         ("どうしたって！", "Dou shitatte!"),
+        ("いつだってチックタックと", "Itsu datte chikkutakku to"),
         ("それもそっか", "Sore mo sokka"),
     ],
 )

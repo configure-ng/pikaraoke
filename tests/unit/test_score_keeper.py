@@ -7,8 +7,9 @@ import pytest
 
 from pikaraoke.lib import pitch
 from pikaraoke.lib import score_keeper as sk
+from pikaraoke.lib.chart import Note
 from pikaraoke.lib.events import EventSystem
-from pikaraoke.lib.score_keeper import PlaybackState, ScoreKeeper
+from pikaraoke.lib.score_keeper import Melody, PlaybackState, ScoreKeeper
 
 MIC_RATE = 16000
 CHUNK = 800  # 50 ms, as the sound manager delivers it
@@ -55,19 +56,22 @@ def silence():
 class _Song:
     """A ScoreKeeper over a fake playback whose position the test drives."""
 
-    def __init__(self, monkeypatch, semitones=0, enabled=True, backing=None):
+    def __init__(self, monkeypatch, semitones=0, enabled=True, backing=None, melody=None):
         monkeypatch.setattr(
             sk, "decode_audio", lambda path: _backing() if backing is None else backing
         )
         self.events = EventSystem()
         self.state = PlaybackState("PB1", "/songs/song.mp4", semitones, None, False)
         self.captures = []
+        self.pitches = []
         self.keeper = ScoreKeeper(
             events=self.events,
             set_capture=self.captures.append,
             get_playback=lambda: self.state,
             is_enabled=lambda: enabled,
             spawn=lambda f, *args: f(*args),
+            get_melody=lambda path: melody,
+            on_pitch=self.pitches.append,
         )
 
     def play(self, **mics: np.ndarray) -> dict | None:
@@ -202,3 +206,65 @@ class TestDecodeAudio:
         cmd, stdin = ffmpeg[0]
         assert "-nostdin" not in cmd and cmd[cmd.index("-i") + 1] == "pipe:0"
         assert stdin == b"mp3 bytes"
+
+
+# The melody of the test song as a chart: each chord's notes in turn, half a
+# second apart, as _sing() sings them.
+MELODY_NOTES = [c[1 + i % 3] % 12 + 60 for c in CHORDS for i in range(4)]
+CHART = Melody([Note(0.5 * i, 0.4, p) for i, p in enumerate(MELODY_NOTES)], offset=0.0)
+
+
+def _melody_singer(shift=0.0):
+    notes = iter(MELODY_NOTES)
+    return lambda chord: next(notes) + shift
+
+
+def test_with_a_chart_singing_the_melody_beats_singing_around_it(monkeypatch):
+    melody = _Song(monkeypatch, melody=CHART).play(mic=_sing(_melody_singer()))
+    chord_tones = _Song(monkeypatch, melody=CHART).play(mic=_sing(in_tune))
+    off = _Song(monkeypatch, melody=CHART).play(mic=_sing(_melody_singer(1.0)))
+
+    assert melody["mics"][0]["score"] >= 90
+    # Harmony scoring rewards any chord tone; the chart wants the melody's.
+    assert chord_tones["mics"][0]["score"] < melody["mics"][0]["score"] - 20
+    assert off["mics"][0]["score"] < 50
+
+
+def test_with_a_chart_the_melody_an_octave_down_is_right(monkeypatch):
+    low = _Song(monkeypatch, melody=CHART).play(mic=_sing(_melody_singer(-12.0)))
+
+    assert low["mics"][0]["score"] >= 90
+
+
+def test_with_a_chart_the_key_change_moves_the_notes(monkeypatch):
+    followed = _Song(monkeypatch, semitones=2, melody=CHART).play(
+        mic=_sing(_melody_singer(), semitones=2)
+    )
+
+    assert followed["mics"][0]["score"] >= 90
+
+
+def test_with_a_chart_the_backing_is_not_analysed(monkeypatch):
+    song = _Song(monkeypatch, melody=CHART)
+    decoded = []
+    monkeypatch.setattr(sk, "decode_audio", lambda path: decoded.append(path))
+
+    song.events.emit("playback_started")
+
+    assert decoded == []
+
+
+def test_pitch_goes_to_the_tv_as_it_is_sung(monkeypatch):
+    song = _Song(monkeypatch)
+    song.play(a=silence(), b=_sing(_melody_singer()))
+
+    by_mic = {}
+    for message in song.pitches:
+        by_mic.setdefault(message["mic"], []).extend(message["frames"])
+    assert set(by_mic) == {1, 2}
+    # The silent mic sends no notes; the singing one sends the melody.
+    assert all(note is None for _, note in by_mic[1])
+    sung = [note for t, note in by_mic[2] if note is not None and 0.1 < t % 0.5 < 0.35]
+    assert len(sung) > 100
+    first = [note for t, note in by_mic[2] if note is not None and 0.1 < t < 0.35]
+    assert first and abs(np.median(first) - MELODY_NOTES[0]) < 0.3

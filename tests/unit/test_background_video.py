@@ -118,6 +118,7 @@ class TestChoosingTheVideos:
                 ("/logo", "images.logo"),
                 ("/qrcode", "images.qrcode"),
                 ("/api/lyrics", "lyrics.get_lyrics"),
+                ("/api/notes", "notes.get_notes"),
             ],
         )
 
