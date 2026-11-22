@@ -7,7 +7,7 @@ import threading
 from pikaraoke.lib.get_platform import get_data_directory
 
 # Bump when the schema changes and add a branch to _migrate().
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 
 _SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -53,6 +53,13 @@ CREATE TABLE IF NOT EXISTS songs (
     lyrics_offset REAL DEFAULT 0,
     -- How the TV shows them: 'off', 'on', 'romaji' or 'kana'. NULL is off.
     lyrics_mode TEXT,
+    -- The original recording on YouTube that lyrics and the note chart are
+    -- timed against; lyrics_offset lines it up with this video.
+    original_url TEXT,
+    -- The melody as notes to sing, as JSON (see chart.py), in the original's time.
+    chart TEXT,
+    -- 'found', 'missing' (no original to make it from) or 'failed'; NULL until made.
+    chart_status TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
@@ -280,6 +287,9 @@ class KaraokeDatabase:
                     ("lyrics_mode", "TEXT"),
                 ):
                     self._conn.execute(f"ALTER TABLE songs ADD COLUMN {column} {coltype}")
+            if from_version < 5:
+                for column in ("original_url", "chart", "chart_status"):
+                    self._conn.execute(f"ALTER TABLE songs ADD COLUMN {column} TEXT")
 
     def _table_exists(self, name: str) -> bool:
         row = self._conn.execute(
@@ -472,6 +482,55 @@ class KaraokeDatabase:
                 "UPDATE songs SET lyrics_mode = ?, lyrics_offset = ? WHERE file_path = ?",
                 (mode, offset, file_path),
             )
+
+    def set_original(self, file_path: str, url: str, offset: float) -> None:
+        """Record the original recording found for a song and how it lines up."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE songs SET original_url = ?, lyrics_offset = ? WHERE file_path = ?",
+                (url, offset, file_path),
+            )
+
+    def get_chart(self, file_path: str) -> dict | None:
+        """A song's chart row: chart (JSON text or None), status, original_url, offset.
+
+        None if the song is not in the library.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT chart, chart_status, original_url, lyrics_offset, artist, title "
+                "FROM songs WHERE file_path = ?",
+                (file_path,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "chart": row[0],
+            "status": row[1],
+            "original_url": row[2],
+            "offset": row[3] or 0.0,
+            "artist": row[4],
+            "title": row[5],
+        }
+
+    def set_chart(self, file_path: str, chart: str | None, status: str | None) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE songs SET chart = ?, chart_status = ? WHERE file_path = ?",
+                (chart, status, file_path),
+            )
+
+    def forget_chart(self, file_path: str) -> None:
+        """Clear a chart, so it is made again."""
+        self.set_chart(file_path, None, None)
+
+    def get_paths_without_chart(self) -> list[str]:
+        """Songs no chart has been tried for yet, for making the whole library's."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT file_path FROM songs WHERE chart_status IS NULL ORDER BY file_path"
+            ).fetchall()
+        return [row[0] for row in rows]
 
     def set_duration(self, file_path: str, seconds: float) -> None:
         """Store a duration in whole seconds, only if the row has none yet.

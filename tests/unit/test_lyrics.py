@@ -16,8 +16,14 @@ OTHER = "/songs/Lemon - 米津玄師---aaaaaaaaaaa.mp4"
 
 
 def _entry(track, artist="YOASOBI", duration=262.0, lrc="[00:10.00]沈むように", **extra):
-    return {"id": 1, "trackName": track, "artistName": artist, "duration": duration,
-            "syncedLyrics": lrc, **extra}
+    return {
+        "id": 1,
+        "trackName": track,
+        "artistName": artist,
+        "duration": duration,
+        "syncedLyrics": lrc,
+        **extra,
+    }
 
 
 class TestParseLrc:
@@ -40,7 +46,9 @@ def test_japanese_lyrics_carry_romaji_and_kana():
 
     assert built["japanese"] is True
     assert built["lines"][0] == {
-        "t": 1.0, "text": "君は僕に似ている", "romaji": "Kimi wa boku ni nite iru",
+        "t": 1.0,
+        "text": "君は僕に似ている",
+        "romaji": "Kimi wa boku ni nite iru",
         "kana": "きみはぼくににている",
     }
     assert built["lines"][1] == {"t": 4.0, "text": "", "romaji": "", "kana": ""}
@@ -48,7 +56,8 @@ def test_japanese_lyrics_carry_romaji_and_kana():
 
 def test_other_lyrics_are_kept_as_written():
     assert lyrics.build_lyrics([(1.0, "Hello")]) == {
-        "japanese": False, "lines": [{"t": 1.0, "text": "Hello"}],
+        "japanese": False,
+        "lines": [{"t": 1.0, "text": "Hello"}],
     }
 
 
@@ -102,13 +111,69 @@ class TestAlignmentOffset:
 
 
 def test_the_original_is_the_result_matching_the_lyrics_length(monkeypatch):
-    monkeypatch.setattr(lyrics, "get_search_results", lambda query: [
-        SearchResult("夜に駆ける カラオケ", "https://y/karaoke", "k", "", "4:22"),
-        SearchResult("夜に駆ける (live)", "https://y/live", "l", "", "5:10"),
-        SearchResult("夜に駆ける", "https://y/original", "o", "", "4:23"),
-    ])
+    monkeypatch.setattr(
+        lyrics,
+        "get_search_results",
+        lambda query: [
+            SearchResult("夜に駆ける カラオケ", "https://y/karaoke", "k", "", "4:22"),
+            SearchResult("夜に駆ける (live)", "https://y/live", "l", "", "5:10"),
+            SearchResult("夜に駆ける", "https://y/original", "o", "", "4:23"),
+        ],
+    )
 
-    assert lyrics.find_original(_entry("夜に駆ける", duration=262.0)) == "https://y/original"
+    assert lyrics.find_original(_entry("夜に駆ける", duration=262.0)) == ["https://y/original"]
+
+
+def test_an_original_that_will_not_download_gives_way_to_the_next(monkeypatch):
+    monkeypatch.setattr(
+        lyrics, "find_original", lambda entry: ["https://y/age-gated", "https://y/topic"]
+    )
+    monkeypatch.setattr(
+        lyrics, "align_to", lambda song, url, run: None if "age-gated" in url else 7.5
+    )
+
+    aligned = lyrics.measure_offset("/songs/a.mp4", _entry("夜に駆ける"))
+
+    assert aligned == lyrics.Aligned("https://y/topic", 7.5)
+
+
+class TestLocateOriginal:
+    """For songs with no lyrics entry: search by name, keep what lines up."""
+
+    @pytest.fixture
+    def results(self, monkeypatch):
+        found = [
+            SearchResult("夜に駆ける カラオケ", "https://y/karaoke", "k", "", "4:22"),
+            SearchResult("夜に駆ける cover", "https://y/cover", "c", "", "4:25"),
+            SearchResult("夜に駆ける", "https://y/original", "o", "", "4:23"),
+            SearchResult("夜に駆ける 1 hour loop", "https://y/loop", "h", "", "60:00"),
+        ]
+        monkeypatch.setattr(lyrics, "get_search_results", lambda query: found)
+        tried = []
+
+        def align(song, url, run):
+            tried.append(url)
+            return 7.0 if url == "https://y/original" else None
+
+        monkeypatch.setattr(lyrics, "align_to", align)
+        return tried
+
+    def test_the_first_result_that_lines_up_is_taken(self, results):
+        aligned = lyrics.locate_original("/songs/a.mp4", "夜に駆ける YOASOBI", 270)
+
+        assert aligned == lyrics.Aligned("https://y/original", 7.0)
+        # Karaoke versions are never tried; covers are, and do not line up.
+        assert results == ["https://y/cover", "https://y/original"]
+
+    def test_results_far_from_the_video_length_are_skipped(self, results):
+        lyrics.locate_original("/songs/a.mp4", "夜に駆ける YOASOBI", 270)
+
+        assert "https://y/loop" not in results
+
+    def test_nothing_lining_up_is_nothing_found(self, monkeypatch, results):
+        monkeypatch.setattr(lyrics, "align_to", lambda song, url, run: None)
+
+        assert lyrics.locate_original("/songs/a.mp4", "夜に駆ける YOASOBI", 270) is None
 
 
 class TestFindLyrics:
@@ -117,7 +182,15 @@ class TestFindLyrics:
         lrc = "[00:10.00]二人だけの空\n[00:20.00]"
         monkeypatch.setattr(lyrics, "search_lrclib", lambda q: [_entry("夜に駆ける", lrc=lrc)])
         offsets = {"value": 7.5}
-        monkeypatch.setattr(lyrics, "measure_offset", lambda path, entry, run: offsets["value"])
+        monkeypatch.setattr(
+            lyrics,
+            "measure_offset",
+            lambda path, entry, run: (
+                None
+                if offsets["value"] is None
+                else lyrics.Aligned("https://y/original", offsets["value"])
+            ),
+        )
         return offsets
 
     def test_found_lyrics_are_stored_with_their_offset(self, online):
@@ -125,6 +198,7 @@ class TestFindLyrics:
 
         stored = json.loads(found.lyrics)
         assert found.offset == 7.5 and stored["aligned"] is True
+        assert found.original == "https://y/original"
         assert stored["lines"][0]["romaji"] == "Futari dake no sora"
 
     def test_unaligned_lyrics_keep_the_recording_timing(self, online):
@@ -152,8 +226,9 @@ class _Room:
         self.playing = playing
         self.lookups = []
         self.notified = 0
-        default = Found(lyrics=json.dumps({"japanese": True, "lines": [{"t": 1, "text": "夜"}]}),
-                        offset=7.5)
+        default = Found(
+            lyrics=json.dumps({"japanese": True, "lines": [{"t": 1, "text": "夜"}]}), offset=7.5
+        )
         self.found = default if found is None else found
 
         def find(path, query, duration, run):
@@ -191,7 +266,10 @@ def test_a_song_is_looked_up_when_it_starts(tmp_path):
 
     assert room.lookups == [(SONG, f"query for {SONG}")]
     assert room.manager.state(SONG) == {
-        "status": "found", "modes": ["off", "romaji", "kana"], "mode": "off", "offset": 7.5,
+        "status": "found",
+        "modes": ["off", "romaji", "kana"],
+        "mode": "off",
+        "offset": 7.5,
     }
     assert room.notified == 2  # searching, then found
 

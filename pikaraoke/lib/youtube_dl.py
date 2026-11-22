@@ -265,13 +265,15 @@ def build_ytdl_download_command(
     return cmd
 
 
-def download_audio(video_url: str, dest_dir: str, timeout: float = 180) -> str | None:
-    """Download a video's smallest audio stream into dest_dir; its path, or None.
+def download_audio(
+    video_url: str, dest_dir: str, timeout: float = 180, audio_format: str = "worstaudio/worst"
+) -> str | None:
+    """Download a video's audio into dest_dir; its path, or None.
 
-    For analysis, not playback, so quality does not matter: the smallest is
-    a couple of megabytes for a whole song.
+    For analysis, not playback. Lining songs up needs no quality, and the
+    smallest stream is a couple of megabytes; separating vocals asks for more.
     """
-    cmd = ytdlp_command() + ["-q", "--no-playlist", "-f", "worstaudio/worst"]
+    cmd = ytdlp_command() + ["-q", "--no-playlist", "-f", audio_format]
     cmd += ["-o", os.path.join(dest_dir, "%(id)s.%(ext)s"), "--print", "after_move:filepath"]
     cmd += _js_runtime_args() + ["--", video_url]
     try:

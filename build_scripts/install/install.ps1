@@ -3,6 +3,9 @@ Param(
     [switch]$NoConfirm = $false,
     [switch]$Local = $false,
     [switch]$NoShortcuts = $false,
+    # The note chart add-on: -Charts installs it, -NoCharts skips the question.
+    [switch]$Charts = $false,
+    [switch]$NoCharts = $false,
     [string]$ExePathOutFile = ""
 )
 
@@ -52,6 +55,29 @@ if (!$NoConfirm) {
     if ($confirmation -notmatch "^[Yy]$") {
         Write-Host "Installation cancelled."
         exit 1
+    }
+}
+
+# The note chart add-on: the PyTorch models that turn each song's original
+# recording into notes to sing along to. Large, so it is asked for; an upgrade
+# of an install that has it keeps it.
+$withCharts = $Charts
+if (!$Charts -and !$NoCharts) {
+    $hasCharts = $false
+    try {
+        $toolPython = Join-Path (uv tool dir 2>$null | Out-String).Trim() "pikaraoke\Scripts\python.exe"
+        if (Test-Path $toolPython) {
+            & $toolPython -c "import torch" 2>$null
+            $hasCharts = ($LASTEXITCODE -eq 0)
+        }
+    } catch { }
+    if ($hasCharts) {
+        $withCharts = $true
+    } elseif (!$NoConfirm) {
+        Write-Host "The note chart add-on draws each song's melody as notes to sing along to."
+        Write-Host "It downloads 3-6 GB (PyTorch and its models) and works best with an NVIDIA graphics card."
+        $answer = Read-Host "Do you want to install the note chart add-on? (y/n)"
+        $withCharts = $answer -match "^[Yy]$"
     }
 }
 
@@ -106,14 +132,24 @@ $uvPackages = uv tool list | Out-String
 # 6. install pikaraoke with uv
 $wasInstalled = $uvPackages -match "pikaraoke"
 $source = if ($Local) { "." } else { $PackageSource }
+$extraArgs = @()
+if ($withCharts) {
+    Write-Host "Including the note chart add-on..." -ForegroundColor Yellow
+    $source = if ($Local) { ".[charts]" } else { $PackageSource -replace "^pikaraoke @", "pikaraoke[charts] @" }
+    # "auto" picks the CUDA build of PyTorch for an NVIDIA card, else the CPU one.
+    # The vocal separator pins an old beartype that fails on new Pythons.
+    $overrides = Join-Path $env:TEMP "pikaraoke-overrides.txt"
+    Set-Content -Path $overrides -Value "beartype>=0.22" -Encoding ASCII
+    $extraArgs = @("--torch-backend", "auto", "--overrides", $overrides)
+}
 if ($wasInstalled) {
     # Reinstall rather than "uv tool upgrade": the archive URL never changes, so
     # only a refetch picks up new commits, and it also replaces a PyPI install.
     Write-Host "Upgrading pikaraoke via uv..." -ForegroundColor Yellow
-    uv tool install --force --reinstall $source
+    uv tool install --force --reinstall @extraArgs $source
 } else {
     Write-Host "Installing pikaraoke via uv..." -ForegroundColor Yellow
-    uv tool install $source
+    uv tool install @extraArgs $source
 }
 if ($LASTEXITCODE -ne 0) { throw "Failed to install/upgrade pikaraoke via uv tool" }
 

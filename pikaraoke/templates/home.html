@@ -109,9 +109,46 @@
 			// {# MSG: Link to look up the playing song's lyrics again. #}
 			$("<a class='js-lyrics-retry'>").text({{ _('Try again') | tojson }}).appendTo($status);
 		}
-		var showing = found && lyrics.mode !== "off";
-		$("#lyrics-timing").toggle(showing);
-		var offset = lyrics.offset || 0;
+	}
+
+	// The note guide for the playing song: on or off for every song, and what
+	// the chart add-on is doing about this one's chart.
+	function renderNotesControl(np) {
+		var playing = !!np;
+		$("#notes-control").toggle(playing);
+		if (!playing) return;
+		var on = np.note_guide !== false;
+		$("#notes-control .js-notes-guide").each(function () {
+			var selected = ($(this).data("state") === "on") === on;
+			$(this).toggleClass("is-primary is-selected", selected);
+		});
+		var $status = $("#notes-status").empty();
+		var chart = np.now_playing_chart;
+		if (!np.charts_available) {
+			// {# MSG: Shown under the note guide control when the song has no note chart and charts cannot be made here. #}
+			$status.text({{ _('Shows each singer\'s pitch. Note bars need the chart add-on.') | tojson }});
+		} else if (chart === "making") {
+			// {# MSG: Shown while the note chart (the melody as notes to sing) is being made for the playing song. #}
+			$status.text({{ _('Making the note chart...') | tojson }});
+		} else if (chart === "missing" || chart === "failed") {
+			$status.text(chart === "missing"
+				// {# MSG: Shown when no original recording of the playing song could be found to make a note chart from. #}
+				? {{ _('No original recording found to make notes from.') | tojson }} + " "
+				// {# MSG: Shown when making the note chart for the playing song went wrong. #}
+				: {{ _('The note chart could not be made.') | tojson }} + " ");
+			// {# MSG: Link to try making the playing song's note chart again. #}
+			$("<a class='js-notes-retry'>").text({{ _('Try again') | tojson }}).appendTo($status);
+		}
+	}
+
+	// Earlier/Later move the lyrics and the note bars together: both follow the
+	// original recording, lined up with the video by the same offset.
+	function renderTimingControl(np) {
+		var lyrics = np && np.now_playing_lyrics;
+		var lyricsShowing = !!lyrics && lyrics.status === "found" && lyrics.mode !== "off";
+		var notesShowing = !!np && np.now_playing_chart === "found" && np.note_guide !== false;
+		$("#lyrics-timing").toggle(lyricsShowing || notesShowing);
+		var offset = (lyrics && lyrics.offset) || 0;
 		$("#lyrics-offset").text((offset > 0 ? "+" : "") + offset.toFixed(1) + "s");
 	}
 
@@ -179,6 +216,8 @@
 		// height and does not flash as the song changes.
 		$("#focus-playing").toggle(playing || gap).toggleClass("is-inert", gap);
 		renderLyricsControl(playing ? np.now_playing_lyrics : null);
+		renderNotesControl(playing ? np : null);
+		renderTimingControl(playing ? np : null);
 		$("#focus-pending").toggle(manualWait);
 
 		// The ways-in: shown only on the idle screen, so a guest has somewhere to go.
@@ -334,6 +373,12 @@
 		});
 		$("#lyrics-control").on("click", ".js-lyrics-retry", function () {
 			$.post(window.pikaraokeConfig.basePath + "/api/lyrics/retry");
+		});
+		$("#notes-control").on("click", ".js-notes-guide", function () {
+			$.post(window.pikaraokeConfig.basePath + "/api/notes/guide/" + $(this).data("state"));
+		});
+		$("#notes-control").on("click", ".js-notes-retry", function () {
+			$.post(window.pikaraokeConfig.basePath + "/api/notes/retry");
 		});
 		$(".js-lyrics-nudge").click(function () {
 			$.post(window.pikaraokeConfig.basePath + "/api/lyrics/nudge?seconds=" + $(this).data("seconds"));
@@ -619,13 +664,30 @@
 				<div id="lyrics-modes" class="buttons has-addons mb-0"></div>
 			</div>
 			<p id="lyrics-status" class="is-size-7 has-text-grey-light mt-1 mb-0"></p>
-			<div id="lyrics-timing" class="is-flex is-align-items-center mt-2" style="display: none">
-				{# MSG: Button that makes the lyrics on the TV appear sooner. #}
-				<button class="button is-small js-lyrics-nudge" data-seconds="-0.5">{% trans %}Earlier{% endtrans %}</button>
-				<span id="lyrics-offset" class="is-size-7 mx-3"></span>
-				{# MSG: Button that makes the lyrics on the TV appear later. #}
-				<button class="button is-small js-lyrics-nudge" data-seconds="0.5">{% trans %}Later{% endtrans %}</button>
+		</div>
+		{# The note guide: the melody as bars on the TV, with each singer's pitch. #}
+		<div id="notes-control" class="mt-3" style="display: none">
+			<div class="is-flex is-align-items-center is-justify-content-space-between is-flex-wrap-wrap">
+				<span class="icon-text has-text-weight-semibold mr-2">
+					<span class="icon"><i class="ph ph-music-notes"></i></span>
+					{# MSG: Label for the control that shows the melody's notes and each singer's pitch on the TV. #}
+					<span>{% trans %}Notes{% endtrans %}</span>
+				</span>
+				<div class="buttons has-addons mb-0">
+					{# MSG: Note guide setting: hidden. #}
+					<button class="button is-small js-notes-guide" data-state="off">{% trans %}Off{% endtrans %}</button>
+					{# MSG: Note guide setting: shown. #}
+					<button class="button is-small js-notes-guide" data-state="on">{% trans %}On{% endtrans %}</button>
+				</div>
 			</div>
+			<p id="notes-status" class="is-size-7 has-text-grey-light mt-1 mb-0"></p>
+		</div>
+		<div id="lyrics-timing" class="is-flex is-align-items-center mt-2" style="display: none">
+			{# MSG: Button that makes the lyrics and note bars on the TV come sooner. #}
+			<button class="button is-small js-lyrics-nudge" data-seconds="-0.5">{% trans %}Earlier{% endtrans %}</button>
+			<span id="lyrics-offset" class="is-size-7 mx-3"></span>
+			{# MSG: Button that makes the lyrics and note bars on the TV come later. #}
+			<button class="button is-small js-lyrics-nudge" data-seconds="0.5">{% trans %}Later{% endtrans %}</button>
 		</div>
 	</div>
 

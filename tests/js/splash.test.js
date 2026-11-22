@@ -776,6 +776,7 @@ describe("generated lyrics", () => {
     expect(splash.lyricsView(LINES, 11, 0, "romaji")).toEqual({
       current: "Shizumu you ni",
       next: "Futari dake no",
+      index: 0,
     });
   });
 
@@ -784,9 +785,12 @@ describe("generated lyrics", () => {
   });
 
   it("previews the coming line in a break only once it is near", () => {
-    expect(splash.lyricsView(LINES, 25, 0, "kana")).toEqual({ current: "", next: "" });
-    expect(splash.lyricsView(LINES, 37, 0, "kana")).toEqual({ current: "", next: "さよなら" });
-    expect(splash.lyricsView(LINES, 7, 0, "kana")).toEqual({ current: "", next: "しずむように" });
+    expect(splash.lyricsView(LINES, 25, 0, "kana")).toMatchObject({ current: "", next: "" });
+    expect(splash.lyricsView(LINES, 37, 0, "kana")).toMatchObject({ current: "", next: "さよなら" });
+    expect(splash.lyricsView(LINES, 7, 0, "kana")).toMatchObject({
+      current: "",
+      next: "しずむように",
+    });
   });
 
   it("shifts every line by the offset", () => {

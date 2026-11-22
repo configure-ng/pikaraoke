@@ -13,10 +13,13 @@ PACKAGE_SOURCE="pikaraoke @ https://github.com/configure-ng/pikaraoke/archive/re
 # Handle flags
 CONFIRM="y"
 LOCAL="n"
+CHARTS="ask"
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         -y|--yes) CONFIRM="n" ;;
         -l|--local) LOCAL="y" ;; # this installs pikaraoke from local source
+        --charts) CHARTS="y" ;; # also install the note chart add-on
+        --no-charts) CHARTS="n" ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
     esac
     shift
@@ -80,6 +83,28 @@ if [ "$CONFIRM" == "y" ]; then
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
         echo "Installation cancelled."
         exit 1
+    fi
+fi
+
+# The note chart add-on: the PyTorch models that turn each song's original
+# recording into notes to sing along to. Large, so it is asked for; an upgrade
+# of an install that has it keeps it.
+HAS_CHARTS=0
+if command -v uv &> /dev/null && [ -x "$(uv tool dir 2>/dev/null)/pikaraoke/bin/python" ] \
+    && "$(uv tool dir)/pikaraoke/bin/python" -c "import torch" &> /dev/null; then
+    HAS_CHARTS=1
+fi
+if [ "$CHARTS" == "ask" ]; then
+    if [ $HAS_CHARTS -eq 1 ]; then
+        CHARTS="y"
+    elif [ "$CONFIRM" == "y" ]; then
+        echo "The note chart add-on draws each song's melody as notes to sing along to."
+        echo "It downloads 3-15 GB (PyTorch and its models) and works best with an NVIDIA or AMD graphics card."
+        read -p "Do you want to install the note chart add-on? (y/n) " -r < /dev/tty
+        if [[ $REPLY =~ ^[Yy]$ ]]; then CHARTS="y"; else CHARTS="n"; fi
+        echo
+    else
+        CHARTS="n"
     fi
 fi
 
@@ -182,15 +207,35 @@ fi
 echo "Installing pikaraoke via uv..."
 
 if [ "$LOCAL" == "y" ]; then SOURCE="."; else SOURCE="$PACKAGE_SOURCE"; fi
+EXTRA_ARGS=()
+if [ "$CHARTS" == "y" ]; then
+    echo "Including the note chart add-on..."
+    if [ "$LOCAL" == "y" ]; then SOURCE=".[charts]"; else SOURCE="${PACKAGE_SOURCE/pikaraoke @/pikaraoke[charts] @}"; fi
+    # PyTorch is built separately for each kind of graphics card.
+    TORCH_BACKEND="auto"
+    if [ "$OS_TYPE" == "Linux" ]; then
+        if command -v lspci &> /dev/null && lspci | grep -iE "vga|3d|display" | grep -qi nvidia; then
+            TORCH_BACKEND="auto"
+        elif [ -e /dev/kfd ] && command -v lspci &> /dev/null && lspci | grep -iE "vga|3d|display" | grep -qiE "amd|ati"; then
+            TORCH_BACKEND="rocm7.2"
+        else
+            TORCH_BACKEND="cpu"
+        fi
+    fi
+    # The vocal separator pins an old beartype that fails on new Pythons.
+    OVERRIDES="$(mktemp)"
+    echo "beartype>=0.22" > "$OVERRIDES"
+    EXTRA_ARGS=(--torch-backend "$TORCH_BACKEND" --overrides "$OVERRIDES")
+fi
 if uv tool list | grep -q "pikaraoke"; then
     WAS_INSTALLED=1
     echo "PiKaraoke is already installed. Upgrading..."
     # Reinstall rather than "uv tool upgrade": the archive URL never changes, so
     # only a refetch picks up new commits, and it also replaces a PyPI install.
-    uv tool install --force --reinstall "$SOURCE"
+    uv tool install --force --reinstall "${EXTRA_ARGS[@]}" "$SOURCE"
 else
     WAS_INSTALLED=0
-    uv tool install "$SOURCE"
+    uv tool install "${EXTRA_ARGS[@]}" "$SOURCE"
 fi
 
 # 6. Create Desktop Shortcuts

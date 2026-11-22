@@ -38,6 +38,10 @@ class PreferenceManager:
         "bg_music_volume": 0.3,
         "disable_bg_video": False,
         "disable_score": False,
+        # Note charts: made with the chart add-on when it is installed, and
+        # drawn on the TV with each singer's pitch while the guide is on.
+        "make_charts": True,
+        "note_guide": True,
         "autoplay": True,
         "limit_user_songs_by": 0,
         "enable_fair_queue": False,

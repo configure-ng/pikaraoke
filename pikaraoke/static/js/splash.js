@@ -163,11 +163,11 @@ const lyricsView = (lines, time, offset, field) => {
   while (i + 1 < lines.length && lines[i + 1].t + offset <= time + LYRICS_LEAD_S) i += 1;
   const text = (k) => (k >= 0 && k < lines.length ? lines[k][field] || "" : "");
   const current = text(i);
-  if (current) return { current, next: text(i + 1) };
+  if (current) return { current, next: text(i + 1), index: i };
   // Before the first line or in a break: only the coming line, once it is near.
   const coming = lines[i + 1];
   const near = coming && coming.t + offset - time <= LYRICS_PREVIEW_S;
-  return { current: "", next: near ? text(i + 1) : "" };
+  return { current: "", next: near ? text(i + 1) : "", index: -1 };
 };
 
 const fetchLyrics = async (song) => {
@@ -197,6 +197,24 @@ const updateLyrics = (np) => {
   renderLyrics();
 };
 
+// Colour the current line in as it is sung, when a note chart says how far along it is.
+const wipeLine = (view, time) => {
+  const line = document.getElementById("lyrics-current");
+  if (!line) return;
+  let progress = null;
+  if (view.index >= 0 && typeof NoteGuide !== "undefined") {
+    const lines = lyrics.lines;
+    const start = lines[view.index].t + lyricsOffset;
+    const following = lines[view.index + 1];
+    const end = following ? following.t + lyricsOffset : start + 10;
+    progress = NoteGuide.lineProgress(start, end, time);
+  }
+  line.classList.toggle("wiping", progress !== null);
+  if (progress === null) return;
+  if (line.dataset.text !== view.current) line.dataset.text = view.current;
+  line.style.setProperty("--wipe", `${(progress * 100).toFixed(1)}%`);
+};
+
 const setLineText = (selector, text) => {
   const $line = $(selector);
   if ($line.text() !== text) $line.text(text);
@@ -207,9 +225,11 @@ const renderLyrics = () => {
   const field = LYRICS_FIELDS[lyricsMode];
   const show = Boolean(field && lyrics && lyricsSong);
   if (show) {
-    const view = lyricsView(lyrics.lines, getVideoPlayer().currentTime, lyricsOffset, field);
+    const time = getVideoPlayer().currentTime;
+    const view = lyricsView(lyrics.lines, time, lyricsOffset, field);
     setLineText("#lyrics-current", view.current);
     setLineText("#lyrics-next", view.next);
+    wipeLine(view, time);
   }
   const overlay = document.getElementById("lyrics-overlay");
   if (overlay && (overlay.style.display !== "none") !== show) $(overlay).toggle(show);
@@ -491,6 +511,7 @@ const handleNowPlayingUpdate = (np) => {
 
   updateSubtitles(np.now_playing_subtitle_url, video);
   updateLyrics(np);
+  if (typeof NoteGuide !== "undefined") NoteGuide.update(np);
 
   if (np.now_playing_url && np.now_playing_url !== currentVideoUrl) {
     currentVideoUrl = np.now_playing_url;
@@ -618,6 +639,8 @@ const setupVideoPlayer = () => {
   $('#video-container').hide();
   const video = getVideoPlayer();
   setInterval(renderLyrics, 100);
+  const lane = document.getElementById("note-lane");
+  if (lane && typeof NoteGuide !== "undefined") NoteGuide.start(lane, () => video.currentTime);
   video.addEventListener("play", () => {
     $("#video-container").show();
     if (isMaster) {
@@ -827,6 +850,7 @@ const setupSocketEvents = () => {
     flashNotification(message, categoryClass);
   });
   socket.on("now_playing", handleNowPlayingUpdate);
+  socket.on("pitch", (data) => { if (typeof NoteGuide !== "undefined") NoteGuide.onPitch(data); });
   socket.on("preferences_update", applyPreferenceUpdate);
   socket.on("preferences_reset", applyPreferencesReset);
   socket.on("score_phrases_update", (phrases) => { scoreReviews = phrases; });

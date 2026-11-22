@@ -109,7 +109,7 @@ class TestInit:
 
     def test_user_version(self, db):
         ver = db._conn.execute("PRAGMA user_version").fetchone()[0]
-        assert ver == 4
+        assert ver == 5
 
     def test_fresh_schema_has_the_new_v2_columns(self, db):
         assert _NEW_IN_V2 <= _song_columns(db._conn)
@@ -196,7 +196,7 @@ class TestSchemaV2Migration:
         db = KaraokeDatabase(legacy_db_path)
         ver = db._conn.execute("PRAGMA user_version").fetchone()[0]
         db.close()
-        assert ver == 4
+        assert ver == 5
 
     def test_existing_row_survives_with_nulls_in_the_new_columns(self, legacy_db_path):
         db = KaraokeDatabase(legacy_db_path)
@@ -352,7 +352,15 @@ class TestSchemaV4Migration:
         db.close()
         conn = sqlite3.connect(path)
         # Back to v3: SQLite 3.35+ drops columns, which is enough for the test.
-        for column in ("lyrics", "lyrics_status", "lyrics_offset", "lyrics_mode"):
+        for column in (
+            "lyrics",
+            "lyrics_status",
+            "lyrics_offset",
+            "lyrics_mode",
+            "original_url",
+            "chart",
+            "chart_status",
+        ):
             conn.execute(f"ALTER TABLE songs DROP COLUMN {column}")
         conn.execute("PRAGMA user_version = 3")
         conn.commit()
@@ -374,6 +382,66 @@ class TestSchemaV4Migration:
         for _ in range(3):
             db = KaraokeDatabase(v3_db_path)
             db.close()
+
+
+class TestSchemaV5Migration:
+    """Note charts: a v4 songs table gains the original and chart columns by ALTER."""
+
+    @pytest.fixture
+    def v4_db_path(self, tmp_path):
+        path = str(tmp_path / "pikaraoke.db")
+        db = KaraokeDatabase(path)
+        db.insert_songs([{"file_path": "/songs/a.mp4", "youtube_id": None, "format": "mp4"}])
+        db.set_lyrics("/songs/a.mp4", '{"lines": []}', 7.5)
+        db.close()
+        conn = sqlite3.connect(path)
+        for column in ("original_url", "chart", "chart_status"):
+            conn.execute(f"ALTER TABLE songs DROP COLUMN {column}")
+        conn.execute("PRAGMA user_version = 4")
+        conn.commit()
+        conn.close()
+        return path
+
+    def test_an_existing_song_keeps_its_lyrics_and_has_no_chart_yet(self, v4_db_path):
+        db = KaraokeDatabase(v4_db_path)
+        row = db.get_chart("/songs/a.mp4")
+        lyrics = db.get_lyrics("/songs/a.mp4")
+        db.close()
+        assert (row["chart"], row["status"], row["original_url"]) == (None, None, None)
+        assert row["offset"] == 7.5 and lyrics["status"] == "found"
+
+
+class TestCharts:
+    def test_an_original_and_a_chart_are_stored(self, db):
+        db.insert_songs([{"file_path": "/songs/a.mp4", "youtube_id": None, "format": "mp4"}])
+
+        db.set_original("/songs/a.mp4", "https://y/original", 3.5)
+        db.set_chart("/songs/a.mp4", '{"notes": []}', "found")
+
+        row = db.get_chart("/songs/a.mp4")
+        assert (row["chart"], row["status"], row["original_url"], row["offset"]) == (
+            '{"notes": []}',
+            "found",
+            "https://y/original",
+            3.5,
+        )
+        assert db.get_lyrics("/songs/a.mp4")["offset"] == 3.5
+
+    def test_songs_without_a_chart_are_listed_until_one_is_tried(self, db):
+        db.insert_songs(
+            [
+                {"file_path": p, "youtube_id": None, "format": "mp4"}
+                for p in ("/songs/a.mp4", "/songs/b.mp4")
+            ]
+        )
+        db.set_chart("/songs/a.mp4", None, "missing")
+        assert db.get_paths_without_chart() == ["/songs/b.mp4"]
+
+        db.forget_chart("/songs/a.mp4")
+        assert db.get_paths_without_chart() == ["/songs/a.mp4", "/songs/b.mp4"]
+
+    def test_an_unknown_song_has_no_row(self, db):
+        assert db.get_chart("/songs/missing.mp4") is None
 
 
 class TestLyrics:

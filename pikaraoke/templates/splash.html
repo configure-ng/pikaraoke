@@ -27,8 +27,10 @@
     scorePhrasesUrl: "{{ url_for('splash.get_score_phrases') }}",
     scoreUrl: "{{ url_for('splash.get_score') }}",
     lyricsUrl: "{{ url_for('lyrics.get_lyrics') }}",
+    notesUrl: "{{ url_for('notes.get_notes') }}",
   };
 </script>
+<script src="{{ url_for('static', filename='js/note-guide.js') }}"></script>
 <script src="{{ url_for('static', filename='js/splash.js') }}"></script>
 {% endblock %} {% block body %}
 <div id="top-container" class="overlay">
@@ -111,6 +113,8 @@
   <video id="video" poster="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" disableRemotePlayback playsinline webkit-playsinline style="width: 100%; height: 100%; object-fit: contain;">
     <source id="video-source" src="" />
   </video>
+  {# The note guide: the melody's notes scrolling past, with each mic's pitch. #}
+  <canvas id="note-lane" style="display: none"></canvas>
   {# Generated lyrics: the line to sing and the one after, when turned on. #}
   <div id="lyrics-overlay" style="display: none">
     <div id="lyrics-current" class="lyrics-line"></div>
@@ -277,6 +281,28 @@
     display: flex;
     align-items: center;
   }
+  #note-lane {
+    position: absolute;
+    top: 13vh;
+    left: 0;
+    width: 100vw;
+    height: 24vh;
+    pointer-events: none;
+    background: linear-gradient(
+      to bottom,
+      transparent,
+      color-mix(in srgb, var(--bulma-black) 60%, transparent) 12%,
+      color-mix(in srgb, var(--bulma-black) 60%, transparent) 88%,
+      transparent
+    );
+    --note-bar: var(--bulma-white);
+    --note-hit: var(--bulma-warning);
+    --note-now: var(--bulma-danger);
+    --note-mic-1: var(--bulma-info);
+    --note-mic-2: var(--bulma-success);
+    --note-mic-3: var(--bulma-primary);
+    --note-mic-4: var(--bulma-link);
+  }
   #lyrics-overlay {
     position: absolute;
     left: 50%;
@@ -303,8 +329,19 @@
     visibility: hidden;
   }
   #lyrics-current {
+    position: relative;
     color: var(--bulma-white);
     font-size: 5.5vh;
+  }
+  /* The wipe: the same line in the sung colour laid over it, revealed from
+     the left as the line is sung. Only when the song has a note chart. */
+  #lyrics-current.wiping::after {
+    content: attr(data-text);
+    position: absolute;
+    inset: 0;
+    padding: inherit;
+    color: var(--bulma-warning);
+    clip-path: inset(0 calc(100% - var(--wipe, 0%)) 0 0);
   }
   #lyrics-next {
     color: color-mix(in srgb, var(--bulma-white) 65%, transparent);
