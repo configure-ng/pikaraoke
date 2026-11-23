@@ -305,6 +305,20 @@ def _in_thread(f: Callable, *args):
     return get_hub().threadpool.apply(f, args)
 
 
+def next_in_line(
+    pending: list[str], now_playing: str | None, queue_position: Callable[[str], int | None]
+) -> str:
+    """Take the next song to work on from pending: the one playing, then songs
+    in the singing queue in their order, then the rest as they came."""
+    if now_playing in pending:
+        pending.remove(now_playing)
+        return now_playing
+    queued = [
+        (pos, i) for i, song in enumerate(pending) if (pos := queue_position(song)) is not None
+    ]
+    return pending.pop(min(queued)[1] if queued else 0)
+
+
 class LyricsManager:
     """Looks up each song's lyrics once and keeps how the room wants them shown."""
 
@@ -320,8 +334,10 @@ class LyricsManager:
         find: Callable[..., Found | None] = find_lyrics,
         spawn: Callable = spawn,
         run: Callable = _in_thread,
+        queue_position: Callable[[str], int | None] = lambda song: None,
     ) -> None:
         self._db = db
+        self._queue_position = queue_position
         self._events = events
         self._get_now_playing = get_now_playing
         self._get_query = get_query
@@ -348,11 +364,7 @@ class LyricsManager:
         row = self._db.get_lyrics(song_path)
         if row is None or row["status"] is not None:
             return
-        # The song playing now jumps the queue: someone may be waiting on it.
-        if song_path == self._get_now_playing():
-            self._pending.insert(0, song_path)
-        else:
-            self._pending.append(song_path)
+        self._pending.append(song_path)
         if not self._working:
             self._working = True
             self._spawn(self._work)
@@ -360,7 +372,10 @@ class LyricsManager:
     def _work(self) -> None:
         try:
             while self._pending:
-                song = self._searching = self._pending.pop(0)
+                # The song playing, then those queued to sing: someone may be waiting.
+                song = self._searching = next_in_line(
+                    self._pending, self._get_now_playing(), self._queue_position
+                )
                 self._changed(song)
                 try:
                     self._look_up(song)

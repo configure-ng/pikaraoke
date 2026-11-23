@@ -345,3 +345,25 @@ def test_one_failing_lookup_does_not_stop_the_rest(tmp_path):
 
     assert room.manager.state(OTHER)["status"] == "found"
     assert room.manager.state(SONG)["status"] is None  # still unlooked, retried next play
+
+
+class TestNextInLine:
+    def test_the_song_playing_comes_first(self):
+        from pikaraoke.lib.lyrics import next_in_line
+
+        pending = ["a", "b", "c"]
+        assert next_in_line(pending, "c", {"b": 0}.get) == "c"
+        assert pending == ["a", "b"]
+
+    def test_then_queued_songs_in_queue_order(self):
+        from pikaraoke.lib.lyrics import next_in_line
+
+        pending = ["a", "b", "c"]
+        assert next_in_line(pending, None, {"c": 0, "b": 1}.get) == "c"
+        assert next_in_line(pending, None, {"c": 0, "b": 1}.get) == "b"
+
+    def test_then_the_rest_as_they_came(self):
+        from pikaraoke.lib.lyrics import next_in_line
+
+        pending = ["a", "b"]
+        assert next_in_line(pending, None, lambda song: None) == "a"

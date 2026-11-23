@@ -20,7 +20,7 @@ from gevent import sleep, spawn
 from pikaraoke.lib import chart
 from pikaraoke.lib.events import EventSystem
 from pikaraoke.lib.karaoke_database import KaraokeDatabase
-from pikaraoke.lib.lyrics import Aligned, locate_original
+from pikaraoke.lib.lyrics import Aligned, locate_original, next_in_line
 from pikaraoke.lib.score_keeper import Melody
 from pikaraoke.lib.youtube_dl import download_audio
 
@@ -107,8 +107,12 @@ class ChartManager:
         download: Callable[[str, str], str | None] = _download_original,
         make_pitch: Callable[[str, str, str], bool] = _make_pitch,
         spawn: Callable = spawn,
+        queue_position: Callable[[str], int | None] = lambda song: None,
     ) -> None:
         self._db = db
+        self._queue_position = queue_position
+        # Failed songs retried by retry_failed this run, so each is tried once more.
+        self._retried: set[str] = set()
         self._model_dir = model_dir
         self._get_now_playing = get_now_playing
         self._get_query = get_query
@@ -151,11 +155,7 @@ class ChartManager:
         row = self._db.get_chart(song_path)
         if row is None or row["status"] is not None:
             return
-        # The song playing now jumps the queue: someone may be waiting on it.
-        if song_path == self._get_now_playing():
-            self._pending.insert(0, song_path)
-        else:
-            self._pending.append(song_path)
+        self._pending.append(song_path)
         if not self._working:
             self._working = True
             self._spawn(self._work)
@@ -170,7 +170,10 @@ class ChartManager:
     def _work(self) -> None:
         try:
             while self._pending:
-                song = self._making = self._pending.pop(0)
+                # The song playing, then those queued to sing: someone may be waiting.
+                song = self._making = next_in_line(
+                    self._pending, self._get_now_playing(), self._queue_position
+                )
                 self._changed(song)
                 try:
                     self._make(song)
@@ -252,3 +255,13 @@ class ChartManager:
         if row is not None and row["status"] in ("missing", "failed"):
             self._db.forget_chart(song_path)
             self.request(song_path)
+
+    def retry_failed(self, song_path: str) -> None:
+        """Try a failed chart once more, at most once a run: a download YouTube
+        refused, or a machine busy at the time, may well work now."""
+        if song_path in self._retried:
+            return
+        row = self._db.get_chart(song_path)
+        if row is not None and row["status"] == "failed":
+            self._retried.add(song_path)
+            self.retry(song_path)

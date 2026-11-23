@@ -375,6 +375,7 @@ class Karaoke:
             get_query=self._lyrics_query,
             get_duration=self.db.get_duration,
             notify=self.update_now_playing_socket,
+            queue_position=self._queue_position,
         )
 
         # Makes note charts with the chart add-on, after each lyrics lookup.
@@ -387,7 +388,12 @@ class Karaoke:
             get_duration=self.db.get_duration,
             notify=self.update_now_playing_socket,
             is_enabled=lambda: bool(self.preferences.get_or_default("make_charts")),
+            queue_position=self._queue_position,
         )
+        # Songs are got ready (lyrics, note chart) ahead of being sung: when
+        # queued, and the whole library in the background once it is loaded.
+        self.events.on("song_queued", self.prepare_song)
+        self.events.on("sync_finished", self.prepare_library)
 
         # Initialize and start download manager
         self.download_manager = DownloadManager(
@@ -411,6 +417,7 @@ class Karaoke:
             logging.info("No existing database found, scanning song directory")
             result = self._scanner.scan(self.download_path)
             self._apply_scan_result(result)
+            self.prepare_library()
 
     def _apply_scan_result(self, result: ScanResult) -> None:
         """Update SongList and emit notifications after a scan."""
@@ -908,20 +915,37 @@ class Karaoke:
             self.socketio.emit("pitch", pitch, room="splash", namespace="/")
 
     def make_all_charts(self) -> int:
-        """Queue a chart for every song without one; how many were queued.
+        """Queue a chart for every song without one; how many were queued."""
+        paths = self.db.get_paths_without_chart()
+        for path in paths:
+            self.prepare_song(path)
+        return len(paths)
 
-        Songs never looked up for lyrics go through that first: it may find the
-        original recording, and the chart follows when it ends.
+    def prepare_song(self, song_path: str) -> None:
+        """Get a song ready to sing in the background: its lyrics, then its chart.
+
+        A song never looked up goes through the lyrics lookup first: it may find
+        the original recording, and the chart follows when it ends.
         """
-        queued = 0
-        for path in self.db.get_paths_without_chart():
-            row = self.db.get_lyrics(path)
-            if row is not None and row["status"] is None:
-                self.lyrics_manager.request(path)
-            else:
-                self.chart_manager.request(path)
-            queued += 1
-        return queued
+        row = self.db.get_lyrics(song_path)
+        if row is not None and row["status"] is None:
+            self.lyrics_manager.request(song_path)
+        else:
+            self.chart_manager.request(song_path)
+            self.chart_manager.retry_failed(song_path)
+
+    def prepare_library(self) -> None:
+        """Get every song in the library ready, a song at a time in the
+        background; songs queued to sing are done first."""
+        for path in self.db.get_all_song_paths():
+            self.prepare_song(path)
+
+    def _queue_position(self, song_path: str) -> int | None:
+        """Where a song is in the singing queue, or None if it is not queued."""
+        for i, item in enumerate(self.queue_manager.queue):
+            if item["file"] == song_path:
+                return i
+        return None
 
     def _lyrics_query(self, song_path: str, row: dict) -> str:
         """What to search lyrics by: the metadata found for the song, else its name."""

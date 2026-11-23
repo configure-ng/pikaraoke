@@ -200,3 +200,33 @@ def test_a_download_refused_every_time_gives_up(monkeypatch):
 
     assert cm._download_original("https://y/original", "/tmp", wait=lambda s: None) is None
     assert len(calls) == cm._DOWNLOAD_ATTEMPTS
+
+
+def test_songs_queued_to_sing_are_made_first(tmp_path):
+    room = _Room(tmp_path, original="https://y/original")
+    later, sooner = "/songs/later---l.mp4", "/songs/sooner---s.mp4"
+    room.db.insert_songs(
+        [{"file_path": p, "youtube_id": None, "format": "mp4"} for p in (later, sooner)]
+    )
+    room.db.set_original(later, "https://y/later", 0.0)
+    room.db.set_original(sooner, "https://y/sooner", 0.0)
+    jobs = []
+    room.manager._spawn = lambda f, *args: jobs.append(f)
+    room.manager._queue_position = {sooner: 0}.get
+
+    for song in (SONG, later, sooner):
+        room.manager.request(song)
+    jobs[0]()
+
+    assert room.downloaded == ["https://y/sooner", "https://y/original", "https://y/later"]
+
+
+def test_a_failed_chart_is_tried_once_more_a_run(tmp_path):
+    room = _Room(tmp_path, original="https://y/original", makes=False)
+    room.manager.request(SONG)
+    assert room.manager.status(SONG) == "failed"
+
+    room.manager.retry_failed(SONG)
+    room.manager.retry_failed(SONG)
+
+    assert len(room.made) == 2

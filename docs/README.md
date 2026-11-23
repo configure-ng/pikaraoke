@@ -124,7 +124,7 @@ Linux needs `pactl`, which works with both PulseAudio and PipeWire. The installe
 
 ## Lyrics for videos without them
 
-Not every karaoke video shows the words. For those, PiKaraoke can put lyrics on the TV. When a song is downloaded, or first played, it looks up the song's timed lyrics on [LRCLIB](https://lrclib.net), an open lyrics database. The lyrics' timing follows the original recording, which rarely starts where a karaoke video does, so PiKaraoke also fetches the original's audio from YouTube and lines the two up by their music.
+Not every karaoke video shows the words. For those, PiKaraoke can put lyrics on the TV. When a song is downloaded, and for every song already in the library when PiKaraoke starts, it looks up the song's timed lyrics on [LRCLIB](https://lrclib.net), an open lyrics database. The lyrics' timing follows the original recording, which rarely starts where a karaoke video does, so PiKaraoke also fetches the original's audio from YouTube and lines the two up by their music.
 
 Lyrics stay off until someone turns them on. While a song plays, the **Lyrics** buttons on the home page set how they show, and anyone in the room can use them. PiKaraoke remembers the choice for that song.
 
@@ -140,7 +140,7 @@ While a song plays, the TV can draw a note guide across the top of the screen: e
 
 With the **note chart add-on**, the guide also shows the song's melody as bars scrolling toward a "now" line, and they fill in where a singer hits them. Karaoke videos carry no melody, so the add-on makes one from the song's original recording: it separates the singer's voice out of the music with a neural network, tracks its pitch, and turns that into notes. It uses the same original recording the lyrics are lined up against, or finds one on YouTube by name and checks it against the video. Songs with a chart are scored by the notes hit (an octave up or down counts); songs without one are scored as before.
 
-- Charts are made in the background, one song at a time, when a song is downloaded or first played. **Settings > Note charts** can make them for the whole library.
+- Charts are made in the background, one song at a time, as soon as a song is downloaded, and for the rest of the library when PiKaraoke starts. Songs in the singing queue are done first, so a chart is usually ready before the song is sung. A chart that failed (YouTube refusing a download, say) is tried once more each time PiKaraoke starts.
 - A chart takes about 30 seconds on a modern graphics card and a few minutes on the CPU. AMD cards compile their kernels the first time, which takes several minutes once.
 - **Earlier / Later** moves the lyrics and the note bars together.
 - Charts are made by machine, so expect most notes to be right, not all: backing vocals, harmonies and very fast passages can confuse them.
