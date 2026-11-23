@@ -180,3 +180,23 @@ def test_reading_a_pitch_curve(tmp_path):
     notes = cm.notes_from_file(str(path))
 
     assert [(n.pitch, round(n.length, 1)) for n in notes] == [(60, 1.0), (64, 0.5)]
+
+
+def test_a_refused_download_is_tried_again(monkeypatch):
+    answers = iter([None, None, "/tmp/original.webm"])
+    monkeypatch.setattr(cm, "download_audio", lambda *a, **k: next(answers))
+    waits = []
+
+    assert (
+        cm._download_original("https://y/original", "/tmp", wait=waits.append)
+        == "/tmp/original.webm"
+    )
+    assert len(waits) == 2
+
+
+def test_a_download_refused_every_time_gives_up(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cm, "download_audio", lambda *a, **k: calls.append(1))
+
+    assert cm._download_original("https://y/original", "/tmp", wait=lambda s: None) is None
+    assert len(calls) == cm._DOWNLOAD_ATTEMPTS

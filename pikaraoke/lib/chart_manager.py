@@ -15,7 +15,7 @@ import tempfile
 from collections.abc import Callable
 
 import numpy as np
-from gevent import spawn
+from gevent import sleep, spawn
 
 from pikaraoke.lib import chart
 from pikaraoke.lib.events import EventSystem
@@ -27,6 +27,9 @@ from pikaraoke.lib.youtube_dl import download_audio
 # Charts need far better audio than lining up does: the voice is separated
 # from it. Anything over a few minutes on the CPU is still a normal song.
 _MAKE_TIMEOUT_S = 30 * 60
+# YouTube now and then refuses a download (HTTP 403) that works moments later.
+_DOWNLOAD_ATTEMPTS = 3
+_DOWNLOAD_RETRY_WAIT_S = 5
 
 
 def _make_pitch(audio_path: str, out_path: str, model_dir: str) -> bool:
@@ -60,8 +63,20 @@ def _addon_available() -> bool:
     return available()
 
 
-def _download_original(url: str, dest_dir: str) -> str | None:
-    return download_audio(url, dest_dir, audio_format="bestaudio/best", timeout=300)
+def _download_original(
+    url: str, dest_dir: str, wait: Callable[[float], None] = sleep
+) -> str | None:
+    """The original's audio, asking again if YouTube refuses at first."""
+    for attempt in range(1, _DOWNLOAD_ATTEMPTS + 1):
+        path = download_audio(url, dest_dir, audio_format="bestaudio/best", timeout=300)
+        if path is not None:
+            return path
+        if attempt < _DOWNLOAD_ATTEMPTS:
+            logging.info(
+                f"Chart: download failed, trying again ({attempt + 1}/{_DOWNLOAD_ATTEMPTS})"
+            )
+            wait(_DOWNLOAD_RETRY_WAIT_S)
+    return None
 
 
 def notes_from_file(path: str) -> list[chart.Note]:
